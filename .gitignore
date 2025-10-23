@@ -1,3 +1,9 @@
+.vscode/*
+build/*
+
+# Apple Generated files
+.DS_Store
+
 # Prerequisites
 *.d
 
