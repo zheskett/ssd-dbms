@@ -2,20 +2,29 @@
 
 Database management system designed for SSDs
 
-How to use:
+## How to use:
+
+Make build folder (run following commands in build/)
 ```bash
-# Make build folder
 mkdir build; cd build
+```
 
-# Configure (Debug mode)
+Configure (Debug mode)
+```bash
 cmake -S .. -B . -DCMAKE_BUILD_TYPE=Debug
+```
 
-# Build
+Build
+```bash
 cmake --build .
+```
 
-# Run the CLI
+Run the CLI
+```bash
 ./ssd-dbms-cli
+```
 
-# Run all tests
+Run tests
+```bash
 ctest --output-on-failure 
 ```
