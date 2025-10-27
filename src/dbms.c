@@ -67,20 +67,25 @@ bool dbms_init_page(const system_catalog_t* catalog, page_t* page) {
     fprintf(stderr, "Tuple size %u too large to fit in page\n", catalog->tuple_size);
     return false;
   }
+  if (catalog->tuple_size % 8 != 0 || catalog->tuple_size < 16) {
+    free(page);
+    fprintf(stderr, "Tuple size %u is invalid\n", catalog->tuple_size);
+    return false;
+  }
 
   // For each tuple, add to free space linked list
   for (uint64_t i = 0; i < page->tuples_per_page; i++) {
-    uint64_t tuple_offset = i * catalog->tuple_size + NULL_BYTE_SIZE;
+    uint64_t tuple_offset = i * catalog->tuple_size + FREE_POINTER_OFFSET;
     uint64_t null_byte_offset = i * catalog->tuple_size;
-    // 0 indicates tuple is free (null)
-    page->data[null_byte_offset] = 0;
-
     uint64_t* next_free_ptr = (uint64_t*)&page->data[tuple_offset];
+    uint64_t* null_byte_ptr = (uint64_t*)&page->data[null_byte_offset];
+
+    *null_byte_ptr = 0;  // Mark as free
     if (i == page->tuples_per_page - 1) {
       *next_free_ptr = 0;  // End of free list
     } else {
       // Don't add null byte size, should point to start of next tuple
-      *next_free_ptr = tuple_offset + catalog->tuple_size - NULL_BYTE_SIZE;
+      *next_free_ptr = tuple_offset + catalog->tuple_size - FREE_POINTER_OFFSET;
     }
   }
 

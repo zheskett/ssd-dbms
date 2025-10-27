@@ -8,6 +8,7 @@
 #define PAGE_SIZE 8192
 #define DATA_SIZE (PAGE_SIZE - 32)
 #define NULL_BYTE_SIZE 1
+#define FREE_POINTER_OFFSET (NULL_BYTE_SIZE * sizeof(uint64_t))
 
 #define CATALOG_RECORD_SIZE 64
 #define CATALOG_ATTRIBUTE_NAME_SIZE (CATALOG_RECORD_SIZE - 3)
@@ -69,7 +70,7 @@ void dbms_free_catalog_records(system_catalog_t catalog);
  * @param attribute_position Position of the attribute (0-based index)
  * @return Byte offset of the attribute within the tuple
  */
-off_t dbms_attribute_offset(const system_catalog_t* catalog, uint8_t attribute_position);
+off_t dbms_get_attribute_offset(const system_catalog_t* catalog, uint8_t attribute_position);
 
 /**
  * @brief Retrieves a catalog record by attribute position

@@ -3,7 +3,7 @@
 static bool create_database(const char* filename);
 
 int main(int argc, char* argv[]) {
-  if (argc != 3) {
+  if (argc < 3) {
     fprintf(stderr, "Usage: %s <-read|--create> <database_file>\n", argv[0]);
     return EXIT_FAILURE;
   }
@@ -40,7 +40,19 @@ int main(int argc, char* argv[]) {
     return EXIT_FAILURE;
   }
 
+  // Read first page
+  page_t first_page;
+  if (!ssdio_read_page(fd, 1, &first_page)) {
+    fprintf(stderr, "Failed to read first page from database file\n");
+    dbms_free_system_catalog(catalog);
+    ssdio_close(fd);
+    return EXIT_FAILURE;
+  }
+
   print_catalog(catalog);
+
+  print_page(&first_page, catalog, true);
+
   dbms_free_system_catalog(catalog);
   ssdio_close(fd);
   return EXIT_SUCCESS;
@@ -171,6 +183,21 @@ static bool create_database(const char* filename) {
 
   if (!ssdio_write_catalog(fd, catalog)) {
     fprintf(stderr, "Failed to write system catalog to database file\n");
+    dbms_free_system_catalog(catalog);
+    ssdio_close(fd);
+    return false;
+  }
+
+  // Create first page
+  page_t first_page = {0};
+  if (!dbms_init_page(catalog, &first_page)) {
+    fprintf(stderr, "Failed to initialize first page\n");
+    dbms_free_system_catalog(catalog);
+    ssdio_close(fd);
+    return false;
+  }
+  if (!ssdio_write_page(fd, 1, &first_page)) {
+    fprintf(stderr, "Failed to write first page to database file\n");
     dbms_free_system_catalog(catalog);
     ssdio_close(fd);
     return false;
