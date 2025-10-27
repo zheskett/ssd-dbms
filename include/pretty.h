@@ -10,4 +10,12 @@
  */
 void print_catalog(const system_catalog_t* catalog);
 
+/**
+ * @brief Converts attribute type to string representation
+ *
+ * @param attribute_type The attribute type as uint8_t
+ * @return String representation of the attribute type
+ */
+const char* attribute_type_to_string(uint8_t attribute_type);
+
 #endif /* PRETTY_H */

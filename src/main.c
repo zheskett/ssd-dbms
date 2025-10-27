@@ -2,11 +2,6 @@
 
 static bool create_database(const char* filename);
 
-/**
- * @brief CLI entry point
- *
- * @return Exit status
- */
 int main(int argc, char* argv[]) {
   if (argc != 3) {
     fprintf(stderr, "Usage: %s <-read|--create> <database_file>\n", argv[0]);
@@ -26,7 +21,7 @@ int main(int argc, char* argv[]) {
   }
 
   // Read existing database
-  int fd = ssdio_open(argv[2]);
+  int fd = ssdio_open(argv[2], false);
   if (fd == -1) {
     fprintf(stderr, "Failed to open database file: %s\n", argv[2]);
     return EXIT_FAILURE;
@@ -52,7 +47,7 @@ int main(int argc, char* argv[]) {
 }
 
 static bool create_database(const char* filename) {
-  int fd = ssdio_open(filename);
+  int fd = ssdio_open(filename, true);
   if (fd == -1) {
     fprintf(stderr, "Failed to create database file: %s\n", filename);
     return false;
@@ -66,7 +61,7 @@ static bool create_database(const char* filename) {
   }
   catalog->records = NULL;
   // First byte determines if a record is null
-  catalog->tuple_size = 1;
+  catalog->tuple_size = NULL_BYTE_SIZE;
   catalog->record_count = 0;
 
   // Let user define schema
@@ -180,6 +175,8 @@ static bool create_database(const char* filename) {
     ssdio_close(fd);
     return false;
   }
+
+  ssdio_flush(fd);
 
   printf("Database created successfully: %s\n", filename);
   dbms_free_system_catalog(catalog);

@@ -17,7 +17,22 @@ void print_catalog(const system_catalog_t* catalog) {
     printf("  Attribute %u:\n", i + 1);
     printf("    Name: %s\n", record->attribute_name);
     printf("    Size: %u bytes\n", record->attribute_size);
-    printf("    Type: %u\n", record->attribute_type);
+    printf("    Type: %s\n", attribute_type_to_string(record->attribute_type));
     printf("    Order: %u\n", record->attribute_order);
+  }
+}
+
+const char* attribute_type_to_string(uint8_t attribute_type) {
+  switch (attribute_type) {
+    case ATTRIBUTE_TYPE_INT:
+      return "INT";
+    case ATTRIBUTE_TYPE_FLOAT:
+      return "FLOAT";
+    case ATTRIBUTE_TYPE_STRING:
+      return "STRING";
+    case ATTRIBUTE_TYPE_BOOL:
+      return "BOOL";
+    default:
+      return "UNUSED";
   }
 }
