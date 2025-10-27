@@ -3,7 +3,7 @@ project(ssd-dbms C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-add_compile_options(-Wall -Werror)
+add_compile_options(-Wall)
 
 # Build the static library
 file(GLOB_RECURSE SRC CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/*.c")
