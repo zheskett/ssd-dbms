@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "align.h"
 #include "ssdio.h"
 
 bool dbms_create_db(const char* filename, const system_catalog_t* catalog) {
@@ -33,6 +34,7 @@ bool dbms_create_db(const char* filename, const system_catalog_t* catalog) {
     ssdio_close(fd);
     return false;
   }
+  memset(first_page, 0, sizeof(page_t));
   dbms_init_page(catalog, first_page);
 
   if (!ssdio_write_page(fd, 1, first_page)) {
@@ -108,6 +110,7 @@ dbms_session_t* dbms_init_dbms_session(const char* filename) {
     dbms_free_dbms_session(session);
     return NULL;
   }
+  memset(pages, 0, BUFFER_POOL_SIZE * sizeof(page_t));
   for (uint32_t i = 0; i < BUFFER_POOL_SIZE; i++) {
     session->buffer_pool->buffer_pages[i].is_free = true;
     session->buffer_pool->buffer_pages[i].is_dirty = false;
@@ -126,8 +129,9 @@ dbms_session_t* dbms_init_dbms_session(const char* filename) {
   }
 
   // Allocate attribute values for each tuple
+  uint8_t num_attributes = dbms_catalog_num_used(session->catalog);
   attribute_value_t* all_attribute_values =
-      calloc(BUFFER_POOL_SIZE * tuples_per_page * dbms_catalog_num_used(session->catalog), sizeof(attribute_value_t));
+      calloc(BUFFER_POOL_SIZE * tuples_per_page * num_attributes, sizeof(attribute_value_t));
   if (!all_attribute_values) {
     fprintf(stderr, "Memory allocation failed for attribute values\n");
     dbms_free_dbms_session(session);
@@ -140,7 +144,16 @@ dbms_session_t* dbms_init_dbms_session(const char* filename) {
       tuple_t* tuple = &session->buffer_pool->buffer_pages[i].tuples[j];
       tuple->id.page_id = 0;
       tuple->id.slot_id = 0;
-      tuple->attributes = &all_attribute_values[(i * tuples_per_page + j) * dbms_catalog_num_used(session->catalog)];
+      tuple->is_null = true;
+      tuple->attributes = &all_attribute_values[(i * tuples_per_page + j) * num_attributes];
+
+      // For each attribute, correctly set type based on catalog
+      for (uint8_t k = 0; k < num_attributes; k++) {
+        catalog_record_t* record = dbms_get_catalog_record(session->catalog, k);
+        if (record) {
+          tuple->attributes[k].type = record->attribute_type;
+        }
+      }
     }
   }
 
@@ -195,6 +208,113 @@ void dbms_free_system_catalog(system_catalog_t* catalog) {
 void dbms_free_catalog_records(system_catalog_t catalog) {
   if (catalog.records) {
     free(catalog.records);
+  }
+}
+
+buffer_page_t* dbms_get_buffer_page(dbms_session_t* session, uint64_t page_id) {
+  if (!session || !session->buffer_pool) {
+    return NULL;
+  }
+
+  // Check if page is already in buffer pool
+  for (uint32_t i = 0; i < BUFFER_POOL_SIZE; i++) {
+    buffer_page_t* buffer_page = &session->buffer_pool->buffer_pages[i];
+    if (!buffer_page->is_free && buffer_page->page_id == page_id) {
+      return buffer_page;
+    }
+  }
+
+  // Page not found in buffer pool, get a free page or evict one
+  buffer_page_t* target_page = dbms_run_buffer_pool_policy(session);
+  if (!target_page) {
+    fprintf(stderr, "Failed to find or evict a buffer page for page ID %llu\n", page_id);
+    return NULL;
+  }
+
+  // Load the requested page from disk
+  if (!ssdio_read_page(session->fd, page_id, target_page->page)) {
+    fprintf(stderr, "Failed to read page %llu from disk\n", page_id);
+    return NULL;
+  }
+
+  target_page->is_free = false;
+  target_page->is_dirty = false;
+  target_page->page_id = page_id;
+  target_page->order_added = session->buffer_pool->page_count++;
+
+  // Set all the tuples and attribute values to match the new page
+  uint64_t tuples_per_page = dbms_catalog_tuples_per_page(session->catalog);
+  uint8_t num_attributes = dbms_catalog_num_used(session->catalog);
+  for (uint64_t j = 0; j < tuples_per_page; j++) {
+    tuple_t* tuple = &target_page->tuples[j];
+    tuple->id.page_id = page_id;
+    tuple->id.slot_id = j;
+
+    // Check if tuple is null based on null byte
+    char* tuple_data = target_page->page->data + (j * session->catalog->tuple_size);
+    tuple->is_null = (tuple_data[0] == 0);
+
+    for (uint8_t k = 0; k < num_attributes; k++) {
+      catalog_record_t* record = dbms_get_catalog_record(session->catalog, k);
+      if (record) {
+        tuple->attributes[k].type = record->attribute_type;
+
+        // Set values
+        // Even if the tuple is null, we set the attribute values for easier access later
+        off_t offset = dbms_get_attribute_offset(session->catalog, k);
+        char* attribute_data = tuple_data + offset;
+        switch (record->attribute_type) {
+          case ATTRIBUTE_TYPE_INT:
+            tuple->attributes[k].int_value = (int32_t)load_u32(attribute_data);
+            break;
+          case ATTRIBUTE_TYPE_FLOAT:
+            tuple->attributes[k].float_value = load_f32(attribute_data);
+            break;
+          case ATTRIBUTE_TYPE_STRING:
+            tuple->attributes[k].string_value = attribute_data;
+            break;
+          case ATTRIBUTE_TYPE_BOOL:
+            tuple->attributes[k].bool_value = (load_u8(attribute_data) != 0);
+            break;
+          default:
+            break;
+        }
+      }
+    }
+  }
+
+  return target_page;
+}
+
+buffer_page_t* dbms_run_buffer_pool_policy(dbms_session_t* session) {
+  if (!session || !session->buffer_pool) {
+    return NULL;
+  }
+
+  // Still free space in buffer pool
+  if (session->buffer_pool->page_count < BUFFER_POOL_SIZE) {
+    // There is still free space in the buffer pool
+    for (uint32_t i = 0; i < BUFFER_POOL_SIZE; i++) {
+      buffer_page_t* buffer_page = &session->buffer_pool->buffer_pages[i];
+      if (buffer_page->is_free) {
+        return buffer_page;
+      }
+    }
+  }
+
+  // TODO: Eviction policy
+  return NULL;
+}
+
+void dbms_flush_buffer_page(dbms_session_t* session, buffer_page_t* buffer_page) {
+  // TODO: Implement flushing all dirty pages in the buffer pool
+  // For now assume pages are always clean
+}
+
+void dbms_flush_buffer_pool(dbms_session_t* session) {
+  for (uint32_t i = 0; i < BUFFER_POOL_SIZE; i++) {
+    buffer_page_t* buffer_page = &session->buffer_pool->buffer_pages[i];
+    dbms_flush_buffer_page(session, buffer_page);
   }
 }
 

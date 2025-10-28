@@ -54,7 +54,7 @@ int cli_insert_command(dbms_session_t* session, int argc, char* argv[]) {
 
 int cli_print_command(dbms_session_t* session, int argc, char* argv[]) {
   if (argc < 2) {
-    fprintf(stderr, "Usage: print <catalog|page> [page_number]\n");
+    fprintf(stderr, "Usage: print <catalog|page>\n");
     return CLI_FAILURE_RETURN_CODE;
   }
 
@@ -63,10 +63,12 @@ int cli_print_command(dbms_session_t* session, int argc, char* argv[]) {
     return CLI_SUCCESS_RETURN_CODE;
   } else if (strcmp(argv[1], "page") == 0) {
     if (argc < 3) {
-      fprintf(stderr, "Usage: print page <page_number>\n");
+      fprintf(stderr, "Usage: print page <page_number> [print_nulls]\n");
       return CLI_FAILURE_RETURN_CODE;
     }
-    // TODO: Print page from buffer pool or read from disk
+    uint64_t page_id = strtoull(argv[2], NULL, 10);
+    bool print_nulls = (argc > 3) ? (strcmp(argv[3], "true") == 0) : false;
+    print_page(session, page_id, print_nulls);
 
     return CLI_SUCCESS_RETURN_CODE;
   } else {

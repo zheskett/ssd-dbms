@@ -13,11 +13,11 @@ void print_catalog(const system_catalog_t* catalog);
 /**
  * @brief Prints the contents of a page to stdout
  *
- * @param page Pointer to the page to print
- * @param catalog Pointer to the system catalog for interpreting tuples
+ * @param session Pointer to the DBMS session
+ * @param page_id ID of the page to print
  * @param print_nulls Whether to print NULL attributes
  */
-void print_page(const page_t* page, const system_catalog_t* catalog, bool print_nulls);
+void print_page(dbms_session_t* session, uint64_t page_id, bool print_nulls);
 
 /**
  * @brief Converts attribute type to string representation

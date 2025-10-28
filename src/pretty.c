@@ -22,49 +22,64 @@ void print_catalog(const system_catalog_t* catalog) {
   }
 }
 
-void print_page(const page_t* page, const system_catalog_t* catalog, bool print_nulls) {
-  if (!page || !catalog) {
-    printf("Page or Catalog is NULL\n");
+void print_page(dbms_session_t* session, uint64_t page_id, bool print_nulls) {
+  if (!session) {
+    printf("DBMS session is NULL\n");
     return;
   }
 
-  printf("Page Information:\n");
+  buffer_page_t* buffer_page = dbms_get_buffer_page(session, page_id);
+  if (!buffer_page || !buffer_page->page) {
+    printf("Page ID %llu not found in buffer pool\n", page_id);
+    return;
+  }
+
+  page_t* page = buffer_page->page;
+  printf("Page ID: %llu\n", page_id);
   printf("Next Page: %llu\n", page->next_page);
   printf("Previous Page: %llu\n", page->prev_page);
-  printf("Tuples Per Page: %llu\n", page->tuples_per_page);
   printf("Free Space Head: %llu\n", page->free_space_head);
+  printf("Tuples Per Page: %llu\n", page->tuples_per_page);
+  printf("Tuples:\n");
 
-  // Print tuples
-  for (uint64_t i = 0; i < page->tuples_per_page; i++) {
-    const char* tuple_data = page->data + (i * catalog->tuple_size);
-    // Check NULL byte
-    if (tuple_data[0] != 0) {
-      printf("Tuple %llu:\n", i + 1);
+  uint64_t tuples_per_page = dbms_catalog_tuples_per_page(session->catalog);
+  uint8_t num_attributes = dbms_catalog_num_used(session->catalog);
+  char* data = page->data;
+  for (uint64_t i = 0; i < tuples_per_page; i++) {
+    char* tuple_data = data + (i * session->catalog->tuple_size);
+    tuple_t* tuple = &buffer_page->tuples[i];
+    if (tuple->is_null) {
+      if (print_nulls) {
+        printf("  NULL Tuple %llu (Page ID: %llu, Slot ID: %llu):\n", i, tuple->id.page_id, tuple->id.slot_id);
+        printf("    Next Free: %llu\n", *(uint64_t*)(tuple_data + FREE_POINTER_OFFSET));
+      }
+      continue;
+    }
 
-      for (uint8_t j = 0; j < catalog->record_count; j++) {
-        const catalog_record_t* record = &catalog->records[j];
-        const char* attribute_data = tuple_data + dbms_get_attribute_offset(catalog, j);
-        printf("  %s: ", record->attribute_name);
+    printf("  Tuple %llu (Page ID: %llu, Slot ID: %llu):\n", i, tuple->id.page_id, tuple->id.slot_id);
+    for (uint8_t j = 0; j < num_attributes; j++) {
+      catalog_record_t* record = dbms_get_catalog_record(session->catalog, j);
+      if (record) {
+        attribute_value_t* attr_value = &tuple->attributes[j];
+        printf("    Attribute %u (%s): ", j + 1, record->attribute_name);
         switch (record->attribute_type) {
           case ATTRIBUTE_TYPE_INT:
-            printf("%d\n", *(int32_t*)attribute_data);
+            printf("%d\n", attr_value->int_value);
             break;
           case ATTRIBUTE_TYPE_FLOAT:
-            printf("%f\n", *(float*)attribute_data);
+            printf("%f\n", attr_value->float_value);
             break;
           case ATTRIBUTE_TYPE_STRING:
-            printf("%.*s\n", record->attribute_size, attribute_data);
+            printf("%s\n", attr_value->string_value ? attr_value->string_value : "NULL");
             break;
           case ATTRIBUTE_TYPE_BOOL:
-            printf("%s\n", (*(bool*)attribute_data) ? "true" : "false");
+            printf("%s\n", attr_value->bool_value ? "true" : "false");
             break;
           default:
+            printf("UNUSED\n");
             break;
         }
       }
-    } else if (print_nulls) {
-      printf("Tuple %llu (NULL):\n", i + 1);
-      printf("  Next Free: %llu\n", (*(uint64_t*)(tuple_data + FREE_POINTER_OFFSET)));
     }
   }
 }
