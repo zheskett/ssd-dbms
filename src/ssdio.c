@@ -121,7 +121,13 @@ bool ssdio_read_catalog(int fd, system_catalog_t* catalog) {
 }
 
 bool ssdio_write_catalog(int fd, const system_catalog_t* catalog) {
-  catalog_record_t buffer[PAGE_SIZE / sizeof(catalog_record_t)] = {0};
+  // Buffer has to be aligned to 4096 because of O_DIRECT, just use PAGE_SIZE for simplicity
+  catalog_record_t* buffer = aligned_alloc(PAGE_SIZE, PAGE_SIZE);
+  memset(buffer, 0, PAGE_SIZE);
+  if (!buffer) {
+    fprintf(stderr, "Failed to allocate aligned buffer for catalog\n");
+    return false;
+  }
 
   for (int i = 0; i < catalog->record_count; i++) {
     if (i >= PAGE_SIZE / sizeof(catalog_record_t)) {
@@ -143,5 +149,6 @@ bool ssdio_write_catalog(int fd, const system_catalog_t* catalog) {
   }
 
   ssize_t bytes_written = pwrite(fd, buffer, PAGE_SIZE, 0);
+  free(buffer);
   return bytes_written == PAGE_SIZE;
 }
