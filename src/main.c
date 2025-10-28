@@ -2,13 +2,8 @@
 
 static bool create_database(const char* filename);
 
-/**
- * @brief CLI entry point
- *
- * @return Exit status
- */
 int main(int argc, char* argv[]) {
-  if (argc != 3) {
+  if (argc < 3) {
     fprintf(stderr, "Usage: %s <-read|--create> <database_file>\n", argv[0]);
     return EXIT_FAILURE;
   }
@@ -26,47 +21,47 @@ int main(int argc, char* argv[]) {
   }
 
   // Read existing database
-  int fd = ssdio_open(argv[2]);
-  if (fd == -1) {
-    fprintf(stderr, "Failed to open database file: %s\n", argv[2]);
-    return EXIT_FAILURE;
-  }
-  system_catalog_t* catalog = calloc(1, sizeof(system_catalog_t));
-  if (!catalog) {
-    fprintf(stderr, "Memory allocation failed for system catalog\n");
-    ssdio_close(fd);
+  // Open DBMS session
+  dbms_session_t* session = dbms_init_dbms_session(argv[2]);
+  if (!session) {
+    fprintf(stderr, "Failed to initialize DBMS session for file: %s\n", argv[2]);
     return EXIT_FAILURE;
   }
 
-  if (!ssdio_read_catalog(fd, catalog)) {
-    fprintf(stderr, "Failed to read system catalog from database file\n");
-    dbms_free_system_catalog(catalog);
-    ssdio_close(fd);
-    return EXIT_FAILURE;
+  printf("Database '%s' opened successfully.\n", session->table_name);
+
+  // CLI loop
+  char input[1024];
+  while (true) {
+    printf("ssd-dbms> ");
+    if (!fgets(input, sizeof(input), stdin)) {
+      printf("Error reading input. Exiting.\n");
+      break;
+    }
+
+    // Remove trailing newline
+    input[strcspn(input, "\n")] = '\0';
+
+    int command_value = cli_exec_command(session, input);
+    if (command_value == CLI_EXIT_RETURN_CODE) {
+      printf("Exiting CLI.\n");
+      break;
+    }
   }
 
-  print_catalog(catalog);
-  dbms_free_system_catalog(catalog);
-  ssdio_close(fd);
+  dbms_free_dbms_session(session);
   return EXIT_SUCCESS;
 }
 
 static bool create_database(const char* filename) {
-  int fd = ssdio_open(filename);
-  if (fd == -1) {
-    fprintf(stderr, "Failed to create database file: %s\n", filename);
-    return false;
-  }
-
   system_catalog_t* catalog = calloc(1, sizeof(system_catalog_t));
   if (!catalog) {
     fprintf(stderr, "Memory allocation failed for system catalog\n");
-    ssdio_close(fd);
     return false;
   }
   catalog->records = NULL;
   // First byte determines if a record is null
-  catalog->tuple_size = 1;
+  catalog->tuple_size = NULL_BYTE_SIZE;
   catalog->record_count = 0;
 
   // Let user define schema
@@ -87,6 +82,14 @@ static bool create_database(const char* filename) {
     }
     if (strcmp(attribute_name, PADDING_NAME) == 0) {
       fprintf(stderr, "Attribute name cannot be '%s'\n", PADDING_NAME);
+      continue;
+    }
+    if (strchr(attribute_name, ' ') || strchr(attribute_name, '\t')) {
+      fprintf(stderr, "Attribute name cannot contain whitespace\n");
+      continue;
+    }
+    if (dbms_get_catalog_record_by_name(catalog, attribute_name) != NULL) {
+      fprintf(stderr, "Attribute name '%s' already exists in catalog\n", attribute_name);
       continue;
     }
 
@@ -131,7 +134,6 @@ static bool create_database(const char* filename) {
     if (!catalog->records) {
       fprintf(stderr, "Memory allocation failed for catalog records\n");
       dbms_free_system_catalog(catalog);
-      ssdio_close(fd);
       return false;
     }
 
@@ -146,7 +148,6 @@ static bool create_database(const char* filename) {
   if (catalog->record_count == 0) {
     fprintf(stderr, "No attributes defined. Aborting database creation.\n");
     dbms_free_system_catalog(catalog);
-    ssdio_close(fd);
     return false;
   }
 
@@ -163,7 +164,6 @@ static bool create_database(const char* filename) {
     if (!catalog->records) {
       fprintf(stderr, "Memory allocation failed for catalog records\n");
       dbms_free_system_catalog(catalog);
-      ssdio_close(fd);
       return false;
     }
     catalog_record_t* padding_record = &catalog->records[catalog->record_count - 1];
@@ -174,15 +174,9 @@ static bool create_database(const char* filename) {
     padding_record->attribute_order = catalog->record_count - 1;
   }
 
-  if (!ssdio_write_catalog(fd, catalog)) {
-    fprintf(stderr, "Failed to write system catalog to database file\n");
-    dbms_free_system_catalog(catalog);
-    ssdio_close(fd);
-    return false;
-  }
+  dbms_create_db(filename, catalog);
 
   printf("Database created successfully: %s\n", filename);
   dbms_free_system_catalog(catalog);
-  ssdio_close(fd);
   return true;
 }

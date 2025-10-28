@@ -19,9 +19,10 @@
  * @brief Opens a file for SSD-DBMS
  *
  * @param filename Name of the file/table to open
+ * @param overwrite Whether to overwrite an existing file
  * @return File descriptor (-1 on failure)
  */
-int ssdio_open(const char* filename);
+int ssdio_open(const char* filename, bool overwrite);
 
 /**
  * @brief Closes a file for SSD-DBMS

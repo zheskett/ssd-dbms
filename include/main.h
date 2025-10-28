@@ -5,8 +5,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "cli_commands.h"
 #include "dbms.h"
 #include "pretty.h"
 #include "ssdio.h"
+
+/**
+ * @brief CLI entry point
+ *
+ * @return Exit status
+ */
+int main(int argc, char* argv[]);
 
 #endif /* MAIN_H */

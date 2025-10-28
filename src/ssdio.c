@@ -16,28 +16,38 @@
 #include <string.h>
 #include <unistd.h>
 
-int ssdio_open(const char* filename) {
+int ssdio_open(const char* filename, bool overwrite) {
   // Open file with appropriate flags based on OS
   // 0644 says read/write for owner, read for group and others
+  int fd = -1;
 #if defined(ON_LINUX)
-  int fd = open(filename, O_RDWR | O_CREAT | O_CLOEXEC | O_DIRECT | O_BINARY, 0644);
-  if (fd != -1) {
+  fd = open(filename, O_RDWR | O_CREAT | O_CLOEXEC | O_DIRECT | O_BINARY, 0644);
+  if (fd >= 0) {
     // Try to not use read-ahead on Linux
-    posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM)
+    posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM);
   }
-  return fd;
 #elif defined(ON_MAC)
-  int fd = open(filename, O_RDWR | O_CREAT | O_CLOEXEC | O_BINARY, 0644);
+  fd = open(filename, O_RDWR | O_CREAT | O_CLOEXEC | O_BINARY, 0644);
   if (fd != -1) {
     // macOS does not support O_DIRECT; use fcntl to set F_NOCACHE
     fcntl(fd, F_NOCACHE, 1);
     fcntl(fd, F_RDAHEAD, 0);
   }
-  return fd;
 #else
-  int fd = open(filename, O_RDWR | O_CREAT | O_CLOEXEC | O_BINARY, 0644);
-  return fd;
+  fd = open(filename, O_RDWR | O_CREAT | O_CLOEXEC | O_BINARY, 0644);
 #endif
+  if (fd < 0) {
+    return -1;
+  }
+
+  if (overwrite) {
+    if (ftruncate(fd, 0) != 0) {
+      close(fd);
+      return -1;
+    }
+  }
+
+  return fd;
 }
 
 int ssdio_close(int fd) {
@@ -94,12 +104,30 @@ bool ssdio_read_catalog(int fd, system_catalog_t* catalog) {
   }
 
   // +1 for null byte
-  catalog->tuple_size = tuple_size + 1;
+  catalog->tuple_size = tuple_size + NULL_BYTE_SIZE;
+
+  // Sort the records by attribute order
+  for (int i = 0; i < ((int)catalog->record_count) - 1; i++) {
+    for (int j = i + 1; j < ((int)catalog->record_count); j++) {
+      if (catalog->records[i].attribute_order > catalog->records[j].attribute_order) {
+        catalog_record_t temp = catalog->records[i];
+        catalog->records[i] = catalog->records[j];
+        catalog->records[j] = temp;
+      }
+    }
+  }
+
   return true;
 }
 
 bool ssdio_write_catalog(int fd, const system_catalog_t* catalog) {
-  catalog_record_t buffer[PAGE_SIZE / sizeof(catalog_record_t)] = {0};
+  // Buffer has to be aligned to 4096 because of O_DIRECT, just use PAGE_SIZE for simplicity
+  catalog_record_t* buffer = aligned_alloc(PAGE_SIZE, PAGE_SIZE);
+  memset(buffer, 0, PAGE_SIZE);
+  if (!buffer) {
+    fprintf(stderr, "Failed to allocate aligned buffer for catalog\n");
+    return false;
+  }
 
   for (int i = 0; i < catalog->record_count; i++) {
     if (i >= PAGE_SIZE / sizeof(catalog_record_t)) {
@@ -121,5 +149,6 @@ bool ssdio_write_catalog(int fd, const system_catalog_t* catalog) {
   }
 
   ssize_t bytes_written = pwrite(fd, buffer, PAGE_SIZE, 0);
+  free(buffer);
   return bytes_written == PAGE_SIZE;
 }
