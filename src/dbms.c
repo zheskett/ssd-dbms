@@ -35,7 +35,12 @@ bool dbms_create_db(const char* filename, const system_catalog_t* catalog) {
     return false;
   }
   memset(first_page, 0, sizeof(page_t));
-  dbms_init_page(catalog, first_page);
+  if (!dbms_init_page(catalog, first_page)) {
+    fprintf(stderr, "Failed to initialize first page\n");
+    free(first_page);
+    ssdio_close(fd);
+    return false;
+  }
 
   if (!ssdio_write_page(fd, 1, first_page)) {
     fprintf(stderr, "Failed to write first page to database file\n");
@@ -263,7 +268,7 @@ buffer_page_t* dbms_get_buffer_page(dbms_session_t* session, uint64_t page_id) {
     tuple->id.slot_id = j;
 
     // Check if tuple is null based on null byte
-    char* tuple_data = target_page->page->data + (j * session->catalog->tuple_size) + TUPLE_START;
+    char* tuple_data = target_page->page->data + (j * session->catalog->tuple_size);
     tuple->is_null = (tuple_data[0] == 0);
 
     for (uint8_t k = 0; k < num_attributes; k++) {
@@ -319,8 +324,28 @@ buffer_page_t* dbms_run_buffer_pool_policy(dbms_session_t* session) {
 }
 
 void dbms_flush_buffer_page(dbms_session_t* session, buffer_page_t* buffer_page) {
-  // TODO: Implement flushing all dirty pages in the buffer pool
-  // For now assume pages are always clean
+  if (!session || !buffer_page) {
+    return;
+  }
+
+  if (buffer_page->is_dirty && !buffer_page->is_free) {
+    if (!ssdio_write_page(session->fd, buffer_page->page_id, buffer_page->page)) {
+      fprintf(stderr, "Failed to flush buffer page %llu to disk\n", buffer_page->page_id);
+      return;
+    }
+
+    // TODO: Better flushing
+    ssdio_flush(session->fd);
+  }
+
+  if (!buffer_page->is_free) {
+    session->buffer_pool->page_count--;
+  }
+
+  buffer_page->last_updated = 0;
+  buffer_page->is_free = true;
+  buffer_page->page_id = 0;
+  buffer_page->is_dirty = false;
 }
 
 void dbms_flush_buffer_pool(dbms_session_t* session) {
@@ -371,23 +396,21 @@ bool dbms_init_page(const system_catalog_t* catalog, page_t* page) {
   page->next_page = 0;
   page->prev_page = 0;
 
-  page->free_space_head = TUPLE_START;
+  page->free_space_head = 0;
   page->tuples_per_page = dbms_catalog_tuples_per_page(catalog);
   if (page->tuples_per_page == 0) {
-    free(page);
     fprintf(stderr, "Tuple size %u too large to fit in page\n", catalog->tuple_size);
     return false;
   }
   if (catalog->tuple_size % 8 != 0 || catalog->tuple_size < 16) {
-    free(page);
     fprintf(stderr, "Tuple size %u is invalid\n", catalog->tuple_size);
     return false;
   }
 
   // For each tuple, add to free space linked list
   for (uint64_t i = 0; i < page->tuples_per_page; i++) {
-    uint64_t tuple_offset = i * catalog->tuple_size + TUPLE_START + FREE_POINTER_OFFSET;
-    uint64_t null_byte_offset = i * catalog->tuple_size;
+    uint64_t tuple_offset = i * catalog->tuple_size + FREE_POINTER_OFFSET;
+    uint64_t null_byte_offset = tuple_offset - FREE_POINTER_OFFSET;
     uint64_t* next_free_ptr = (uint64_t*)&page->data[tuple_offset];
     uint64_t* null_byte_ptr = (uint64_t*)&page->data[null_byte_offset];
 
@@ -416,7 +439,7 @@ uint64_t dbms_catalog_tuples_per_page(const system_catalog_t* catalog) {
   if (!catalog || catalog->tuple_size == 0) {
     return 0;
   }
-  return DATA_SIZE / catalog->tuple_size;
+  return (uint64_t)DATA_SIZE / catalog->tuple_size;
 }
 
 buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session) {
@@ -429,7 +452,8 @@ buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session) {
     buffer_page_t* buffer_page = &session->buffer_pool->buffer_pages[i];
     if (!buffer_page->is_free) {
       page_t* page = buffer_page->page;
-      if (page->free_space_head != 0) {
+      // There is free space if free space head is not at end of data
+      if (page->free_space_head != PAGE_SIZE) {
         return buffer_page;
       }
     }
@@ -451,25 +475,26 @@ buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session) {
   return target_page;
 }
 
-bool dbms_insert_tuple(dbms_session_t* session, attribute_value_t* attributes) {
+tuple_t* dbms_insert_tuple(dbms_session_t* session, attribute_value_t* attributes) {
   if (!session || !attributes) {
-    return false;
+    return NULL;
   }
 
   // Find a page with free space
   buffer_page_t* target_page = dbms_find_page_with_free_space(session);
   if (!target_page) {
     fprintf(stderr, "Failed to find a page with free space for inserting tuple\n");
-    return false;
+    return NULL;
   }
 
   // Insert tuple into the target page
   page_t* page = target_page->page;
   uint64_t free_space_offset = page->free_space_head;
-  ;
-  if (free_space_offset == 0) {
+
+  // free_space_head = PAGE_SIZE means no free space
+  if (free_space_offset >= PAGE_SIZE) {
     fprintf(stderr, "No free space available in the target page\n");
-    return false;
+    return NULL;
   }
 
   // Update free space head to next free tuple
@@ -477,7 +502,7 @@ bool dbms_insert_tuple(dbms_session_t* session, attribute_value_t* attributes) {
   page->free_space_head = next_free_ptr;
 
   // Write attribute values into the page and into the tuples
-  uint64_t slot_id = (free_space_offset - TUPLE_START) / session->catalog->tuple_size;
+  uint64_t slot_id = free_space_offset / session->catalog->tuple_size;
   tuple_t* tuple = &target_page->tuples[slot_id];
   char* tuple_page_loc = &page->data[free_space_offset];
   uint8_t num_attributes = dbms_catalog_num_used(session->catalog);
@@ -518,5 +543,29 @@ bool dbms_insert_tuple(dbms_session_t* session, attribute_value_t* attributes) {
   target_page->is_dirty = true;
   target_page->last_updated = session->update_ctr++;
 
-  return true;
+  return tuple;
+}
+
+tuple_t* dbms_get_tuple(dbms_session_t* session, tuple_id_t tuple_id) {
+  if (!session) {
+    return NULL;
+  }
+
+  uint64_t tuples_per_page = dbms_catalog_tuples_per_page(session->catalog);
+  if (tuple_id.slot_id >= tuples_per_page) {
+    fprintf(stderr, "Invalid slot ID %llu for page ID %llu\n", tuple_id.slot_id, tuple_id.page_id);
+    return NULL;
+  }
+
+  buffer_page_t* buffer_page = dbms_get_buffer_page(session, tuple_id.page_id);
+  if (!buffer_page) {
+    return NULL;
+  }
+
+  tuple_t* tuple = &buffer_page->tuples[tuple_id.slot_id];
+  if (tuple->is_null) {
+    return NULL;
+  }
+
+  return tuple;
 }

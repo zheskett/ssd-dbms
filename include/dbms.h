@@ -7,7 +7,6 @@
 
 #define PAGE_SIZE 8192
 #define DATA_SIZE (PAGE_SIZE - 32)
-#define TUPLE_START (PAGE_SIZE - DATA_SIZE)
 #define NULL_BYTE_SIZE 1
 #define FREE_POINTER_OFFSET (NULL_BYTE_SIZE * sizeof(uint64_t))
 
@@ -241,7 +240,17 @@ buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session);
  * @param attributes Array of attribute values for the tuple.
  * Assumes correct number of attributes and correct order/types
  *
- * @return true on success, false on failure
+ * @return Pointer to the inserted tuple on success, NULL on failure
  */
-bool dbms_insert_tuple(dbms_session_t* session, attribute_value_t* attributes);
+tuple_t* dbms_insert_tuple(dbms_session_t* session, attribute_value_t* attributes);
+
+/**
+ * @brief Retrieves a tuple by its tuple ID
+ *
+ * @param session Pointer to the DBMS session
+ * @param tuple_id The ID of the tuple to retrieve
+ * @return Pointer to the tuple, or NULL if not found
+ */
+tuple_t* dbms_get_tuple(dbms_session_t* session, tuple_id_t tuple_id);
+
 #endif /* DBMS_H */

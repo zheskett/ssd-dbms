@@ -49,6 +49,8 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  dbms_flush_buffer_pool(session);
+
   dbms_free_dbms_session(session);
   return EXIT_SUCCESS;
 }

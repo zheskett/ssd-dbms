@@ -20,6 +20,14 @@ void print_catalog(const system_catalog_t* catalog);
 void print_page(dbms_session_t* session, uint64_t page_id, bool print_nulls);
 
 /**
+ * @brief Prints the contents of a tuple to stdout
+ *
+ * @param session Pointer to the DBMS session
+ * @param tuple Pointer to the tuple to print
+ */
+void print_tuple(dbms_session_t* session, tuple_t* tuple);
+
+/**
  * @brief Converts attribute type to string representation
  *
  * @param attribute_type The attribute type as uint8_t
