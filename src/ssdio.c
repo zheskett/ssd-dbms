@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 int ssdio_open(const char* filename, bool overwrite) {
@@ -151,4 +152,13 @@ bool ssdio_write_catalog(int fd, const system_catalog_t* catalog) {
   ssize_t bytes_written = pwrite(fd, buffer, PAGE_SIZE, 0);
   free(buffer);
   return bytes_written == PAGE_SIZE;
+}
+
+off_t ssdio_get_file_size(int fd) {
+  struct stat s;
+  if (fstat(fd, &s) == -1) {
+    fprintf(stderr, "fstat(%d) failed\n", fd);
+    return 0;
+  }
+  return (s.st_size);
 }

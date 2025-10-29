@@ -62,13 +62,14 @@ typedef struct {
 
 typedef struct {
   tuple_id_t id;
+  bool is_null;
   attribute_value_t* attributes;
 } tuple_t;
 
 typedef struct {
   bool is_free;
   bool is_dirty;
-  uint32_t order_added;
+  uint32_t last_updated;
   uint64_t page_id;
   page_t* page;
   tuple_t* tuples;
@@ -81,6 +82,8 @@ typedef struct {
 
 typedef struct {
   int fd;
+  uint32_t update_ctr;
+  uint32_t page_count;
   char* table_name;
   system_catalog_t* catalog;
   buffer_pool_t* buffer_pool;
@@ -133,6 +136,42 @@ void dbms_free_system_catalog(system_catalog_t* catalog);
 void dbms_free_catalog_records(system_catalog_t catalog);
 
 /**
+ * @brief Retrieves a buffer page from the buffer pool by page ID
+ *
+ * If the page is not found in the buffer pool, it is loaded from disk.
+ *
+ * @param session Pointer to the DBMS session
+ * @param page_id ID of the page to retrieve
+ * @return Pointer to the buffer page, or NULL if not found
+ */
+buffer_page_t* dbms_get_buffer_page(dbms_session_t* session, uint64_t page_id);
+
+/**
+ * @brief Runs the buffer pool eviction policy to free up a buffer page
+ * If there is a free page in the cache, that is the one that is returned.
+ * If a page needs to be evicted, it is written back to disk if dirty.
+ *
+ * @param session Pointer to the DBMS session
+ * @return Pointer to the evicted buffer page, or NULL on failure
+ */
+buffer_page_t* dbms_run_buffer_pool_policy(dbms_session_t* session);
+
+/**
+ * @brief Flushes a single buffer page to disk if it is dirty
+ *
+ * @param session Pointer to the DBMS session
+ * @param buffer_page Pointer to the buffer page to flush
+ */
+void dbms_flush_buffer_page(dbms_session_t* session, buffer_page_t* buffer_page);
+
+/**
+ * @brief Flushes all dirty pages in the buffer pool to disk
+ *
+ * @param session Pointer to the DBMS session
+ */
+void dbms_flush_buffer_pool(dbms_session_t* session);
+
+/**
  * @brief Calculates the byte offset of an attribute within a tuple
  *
  * @param catalog Pointer to the system catalog
@@ -183,4 +222,44 @@ uint8_t dbms_catalog_num_used(const system_catalog_t* catalog);
  * @return Number of tuples per page
  */
 uint64_t dbms_catalog_tuples_per_page(const system_catalog_t* catalog);
+
+/**
+ * @brief Finds a buffer page with free space for inserting a tuple
+ *
+ * Reads from disk if necessary.
+ *
+ * @param session Pointer to the DBMS session
+ * @return Pointer to the buffer page with free space, or NULL on failure
+ */
+buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session);
+
+/**
+ * @brief Inserts a tuple into the database
+ *
+ * @param session Pointer to the DBMS session
+ * @param attributes Array of attribute values for the tuple.
+ * Assumes correct number of attributes and correct order/types
+ *
+ * @return Pointer to the inserted tuple on success, NULL on failure
+ */
+tuple_t* dbms_insert_tuple(dbms_session_t* session, attribute_value_t* attributes);
+
+/**
+ * @brief Deletes a tuple by its tuple ID
+ *
+ * @param session Pointer to the DBMS session
+ * @param tuple_id The ID of the tuple to delete
+ * @return true on success, false on failure
+ */
+bool dbms_delete_tuple(dbms_session_t* session, tuple_id_t tuple_id);
+
+/**
+ * @brief Retrieves a tuple by its tuple ID
+ *
+ * @param session Pointer to the DBMS session
+ * @param tuple_id The ID of the tuple to retrieve
+ * @return Pointer to the tuple, or NULL if not found
+ */
+tuple_t* dbms_get_tuple(dbms_session_t* session, tuple_id_t tuple_id);
+
 #endif /* DBMS_H */
