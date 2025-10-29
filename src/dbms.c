@@ -416,7 +416,7 @@ bool dbms_init_page(const system_catalog_t* catalog, page_t* page) {
 
     *null_byte_ptr = 0;  // Mark as free
     if (i == page->tuples_per_page - 1) {
-      *next_free_ptr = 0;  // End of free list
+      *next_free_ptr = PAGE_SIZE;  // End of free list
     } else {
       // Don't add null byte size, should point to start of next tuple
       *next_free_ptr = tuple_offset + catalog->tuple_size - FREE_POINTER_OFFSET;
@@ -544,6 +544,50 @@ tuple_t* dbms_insert_tuple(dbms_session_t* session, attribute_value_t* attribute
   target_page->last_updated = session->update_ctr++;
 
   return tuple;
+}
+
+bool dbms_delete_tuple(dbms_session_t* session, tuple_id_t tuple_id) {
+  if (!session) {
+    return false;
+  }
+
+  buffer_page_t* buffer_page = dbms_get_buffer_page(session, tuple_id.page_id);
+  if (!buffer_page) {
+    return false;
+  }
+
+  page_t* page = buffer_page->page;
+  uint64_t tuples_per_page = dbms_catalog_tuples_per_page(session->catalog);
+  if (tuple_id.slot_id >= tuples_per_page) {
+    fprintf(stderr, "Invalid slot ID %llu for page ID %llu\n", tuple_id.slot_id, tuple_id.page_id);
+    return false;
+  }
+
+  // Check if tuple is already null
+  tuple_t* tuple = &buffer_page->tuples[tuple_id.slot_id];
+  if (tuple->is_null) {
+    fprintf(stderr, "Tuple %llu:%llu is already null\n", tuple_id.page_id, tuple_id.slot_id);
+    return false;
+  }
+
+  // Get tuple data location
+  uint64_t tuple_offset = tuple_id.slot_id * session->catalog->tuple_size;
+  char* tuple_data = &page->data[tuple_offset];
+  // Nullify the tuple data
+  memset(tuple_data, 0, session->catalog->tuple_size);
+
+  // Add tuple back to free space linked list
+  uint64_t* next_free_ptr = (uint64_t*)&tuple_data[FREE_POINTER_OFFSET];
+  *next_free_ptr = page->free_space_head;
+  page->free_space_head = tuple_offset;
+
+  // Mark tuple as null in buffer page
+  tuple->is_null = true;
+
+  buffer_page->is_dirty = true;
+  buffer_page->last_updated = session->update_ctr++;
+
+  return true;
 }
 
 tuple_t* dbms_get_tuple(dbms_session_t* session, tuple_id_t tuple_id) {

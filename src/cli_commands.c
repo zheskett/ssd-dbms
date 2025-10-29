@@ -38,6 +38,8 @@ int cli_exec(dbms_session_t* session, char* input) {
     return CLI_EXIT_RETURN_CODE;
   } else if (strcmp(command, CLI_EVICT_COMMAND) == 0) {
     return cli_evict_command(session, input_line);
+  } else if (strcmp(command, CLI_DELETE_COMMAND) == 0) {
+    return cli_delete_command(session, input_line);
   } else {
     fprintf(stderr, "Unknown command: %s\n", command);
     return CLI_FAILURE_RETURN_CODE;
@@ -216,5 +218,37 @@ int cli_evict_command(dbms_session_t* session, char* input_line) {
 
   printf("Page %llu evicted from buffer pool\n", page_id);
 
+  return CLI_SUCCESS_RETURN_CODE;
+}
+
+int cli_delete_command(dbms_session_t* session, char* input_line) {
+  if (!session || !input_line) {
+    fprintf(stderr, "Invalid session or input line\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  // Tokenize input line
+  char* tokens[2];
+  int token_count = 0;
+  char* token = strtok(input_line, " \t\n");
+  while (token && token_count < 2) {
+    tokens[token_count++] = token;
+    token = strtok(NULL, " \t\n");
+  }
+  if (token_count < 2) {
+    fprintf(stderr, "Usage: delete <page_number> <slot_number>\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  uint64_t page_id = strtoull(tokens[0], NULL, 10);
+  uint64_t slot_id = strtoull(tokens[1], NULL, 10);
+  tuple_id_t tuple_id = {page_id, slot_id};
+
+  if (!dbms_delete_tuple(session, tuple_id)) {
+    fprintf(stderr, "Failed to delete tuple (%llu, %llu)\n", page_id, slot_id);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  printf("Tuple (%llu, %llu) deleted successfully\n", page_id, slot_id);
   return CLI_SUCCESS_RETURN_CODE;
 }

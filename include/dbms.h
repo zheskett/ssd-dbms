@@ -245,6 +245,15 @@ buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session);
 tuple_t* dbms_insert_tuple(dbms_session_t* session, attribute_value_t* attributes);
 
 /**
+ * @brief Deletes a tuple by its tuple ID
+ *
+ * @param session Pointer to the DBMS session
+ * @param tuple_id The ID of the tuple to delete
+ * @return true on success, false on failure
+ */
+bool dbms_delete_tuple(dbms_session_t* session, tuple_id_t tuple_id);
+
+/**
  * @brief Retrieves a tuple by its tuple ID
  *
  * @param session Pointer to the DBMS session
