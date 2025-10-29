@@ -18,9 +18,9 @@
  * @param input Input command string
  * @return CLI return code
  */
-int cli_exec_command(dbms_session_t* session, char* input);
+int cli_exec(dbms_session_t* session, char* input);
 
-int cli_insert_command(dbms_session_t* session, int argc, char* argv[]);
-int cli_print_command(dbms_session_t* session, int argc, char* argv[]);
+int cli_insert_command(dbms_session_t* session, char* input_line);
+int cli_print_command(dbms_session_t* session, char* input_line);
 
 #endif /* CLI_COMMANDS_H */

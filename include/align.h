@@ -43,4 +43,44 @@ float load_f32(const void* p);
  */
 double load_f64(const void* p);
 
+/**
+ * @brief Store an unsigned integer into misaligned memory.
+ *
+ * @param p Pointer to the memory location.
+ * @param v The value to store.
+ */
+void store_u32(void* p, uint32_t v);
+
+/**
+ * @brief Store an unsigned 64-bit integer into misaligned memory.
+ *
+ * @param p Pointer to the memory location.
+ * @param v The value to store.
+ */
+void store_u64(void* p, uint64_t v);
+
+/**
+ * @brief Store an unsigned 8-bit integer into misaligned memory.
+ *
+ * @param p Pointer to the memory location.
+ * @param v The value to store.
+ */
+void store_u8(void* p, uint8_t v);
+
+/**
+ * @brief Store a 32-bit float into misaligned memory.
+ *
+ * @param p Pointer to the memory location.
+ * @param f The value to store.
+ */
+void store_f32(void* p, float f);
+
+/**
+ * @brief Store a 64-bit double into misaligned memory.
+ *
+ * @param p Pointer to the memory location.
+ * @param d The value to store.
+ */
+void store_f64(void* p, double d);
+
 #endif /* ALIGN_H */

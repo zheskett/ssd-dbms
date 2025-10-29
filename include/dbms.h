@@ -7,6 +7,7 @@
 
 #define PAGE_SIZE 8192
 #define DATA_SIZE (PAGE_SIZE - 32)
+#define TUPLE_START (PAGE_SIZE - DATA_SIZE)
 #define NULL_BYTE_SIZE 1
 #define FREE_POINTER_OFFSET (NULL_BYTE_SIZE * sizeof(uint64_t))
 
@@ -69,7 +70,7 @@ typedef struct {
 typedef struct {
   bool is_free;
   bool is_dirty;
-  uint32_t order_added;
+  uint32_t last_updated;
   uint64_t page_id;
   page_t* page;
   tuple_t* tuples;
@@ -82,6 +83,8 @@ typedef struct {
 
 typedef struct {
   int fd;
+  uint32_t update_ctr;
+  uint32_t page_count;
   char* table_name;
   system_catalog_t* catalog;
   buffer_pool_t* buffer_pool;
@@ -220,4 +223,25 @@ uint8_t dbms_catalog_num_used(const system_catalog_t* catalog);
  * @return Number of tuples per page
  */
 uint64_t dbms_catalog_tuples_per_page(const system_catalog_t* catalog);
+
+/**
+ * @brief Finds a buffer page with free space for inserting a tuple
+ *
+ * Reads from disk if necessary.
+ *
+ * @param session Pointer to the DBMS session
+ * @return Pointer to the buffer page with free space, or NULL on failure
+ */
+buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session);
+
+/**
+ * @brief Inserts a tuple into the database
+ *
+ * @param session Pointer to the DBMS session
+ * @param attributes Array of attribute values for the tuple.
+ * Assumes correct number of attributes and correct order/types
+ *
+ * @return true on success, false on failure
+ */
+bool dbms_insert_tuple(dbms_session_t* session, attribute_value_t* attributes);
 #endif /* DBMS_H */

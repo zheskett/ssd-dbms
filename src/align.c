@@ -31,3 +31,23 @@ double load_f64(const void* p) {
   memcpy(&d, p, sizeof d);
   return d;
 }
+
+void store_u32(void* p, uint32_t v) {
+  memcpy(p, &v, sizeof v);
+}
+
+void store_u64(void* p, uint64_t v) {
+  memcpy(p, &v, sizeof v);
+}
+
+void store_u8(void* p, uint8_t v) {
+  memcpy(p, &v, sizeof v);
+}
+
+void store_f32(void* p, float f) {
+  memcpy(p, &f, sizeof f);
+}
+
+void store_f64(void* p, double d) {
+  memcpy(p, &d, sizeof d);
+}

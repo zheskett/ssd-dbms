@@ -46,7 +46,7 @@ void print_page(dbms_session_t* session, uint64_t page_id, bool print_nulls) {
   uint8_t num_attributes = dbms_catalog_num_used(session->catalog);
   char* data = page->data;
   for (uint64_t i = 0; i < tuples_per_page; i++) {
-    char* tuple_data = data + (i * session->catalog->tuple_size);
+    char* tuple_data = data + (i * session->catalog->tuple_size) + TUPLE_START;
     tuple_t* tuple = &buffer_page->tuples[i];
     if (tuple->is_null) {
       if (print_nulls) {
@@ -70,7 +70,8 @@ void print_page(dbms_session_t* session, uint64_t page_id, bool print_nulls) {
             printf("%f\n", attr_value->float_value);
             break;
           case ATTRIBUTE_TYPE_STRING:
-            printf("%s\n", attr_value->string_value ? attr_value->string_value : "NULL");
+            // Cannot assume null-terminated string
+            printf("%.*s\n", (int)record->attribute_size, attr_value->string_value ? attr_value->string_value : "NULL");
             break;
           case ATTRIBUTE_TYPE_BOOL:
             printf("%s\n", attr_value->bool_value ? "true" : "false");

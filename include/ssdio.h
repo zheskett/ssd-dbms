@@ -78,4 +78,12 @@ bool ssdio_read_catalog(int fd, system_catalog_t* catalog);
  */
 bool ssdio_write_catalog(int fd, const system_catalog_t* catalog);
 
+/**
+ * @brief Gets the size of the file
+ *
+ * @param fd File descriptor
+ * @return Size of the file in bytes, or -1 on failure
+ */
+off_t ssdio_get_file_size(int fd);
+
 #endif /* SSDIO_H */

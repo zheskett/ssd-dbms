@@ -42,7 +42,7 @@ int main(int argc, char* argv[]) {
     // Remove trailing newline
     input[strcspn(input, "\n")] = '\0';
 
-    int command_value = cli_exec_command(session, input);
+    int command_value = cli_exec(session, input);
     if (command_value == CLI_EXIT_RETURN_CODE) {
       printf("Exiting CLI.\n");
       break;
