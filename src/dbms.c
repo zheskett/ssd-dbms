@@ -453,7 +453,7 @@ buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session) {
     if (!buffer_page->is_free) {
       page_t* page = buffer_page->page;
       // There is free space if free space head is not at end of data
-      if (page->free_space_head != PAGE_SIZE) {
+      if (page->free_space_head < PAGE_SIZE) {
         return buffer_page;
       }
     }
@@ -467,7 +467,7 @@ buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session) {
     return NULL;
   }
   page_t* page = target_page->page;
-  if (page->free_space_head == 0) {
+  if (page->free_space_head >= PAGE_SIZE) {
     fprintf(stderr, "Loaded page has no free space\n");
     return NULL;
   }
