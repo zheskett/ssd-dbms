@@ -232,6 +232,11 @@ buffer_page_t* dbms_get_buffer_page(dbms_session_t* session, uint64_t page_id) {
     return NULL;
   }
 
+  if (page_id == 0 || page_id > session->page_count) {
+    fprintf(stderr, "Invalid page ID requested: %llu\n", page_id);
+    return NULL;
+  }
+
   // Check if page is already in buffer pool
   for (uint32_t i = 0; i < BUFFER_POOL_SIZE; i++) {
     buffer_page_t* buffer_page = &session->buffer_pool->buffer_pages[i];
