@@ -123,9 +123,9 @@ static void test_dbms_insert_tuple() {
   TEST_ASSERT_TRUE(reloaded_buffer_page->tuples[0].attributes[4].bool_value);
 }
 
-static void test_dbms_fill_page() {
+static void test_dbms_fill_and_empty_page() {
   attribute_value_t insert_attributes[TEST_CATALOG_SIZE - 1] = {
-      {.type = ATTRIBUTE_TYPE_INT, .int_value = 1},
+      {.type = ATTRIBUTE_TYPE_INT, .int_value = 0},
       {.type = ATTRIBUTE_TYPE_STRING, .string_value = "John Doe"},
       {.type = ATTRIBUTE_TYPE_FLOAT, .float_value = 55000.0f},
       {.type = ATTRIBUTE_TYPE_STRING, .string_value = "Engineering"},
@@ -133,9 +133,12 @@ static void test_dbms_fill_page() {
 
   size_t tuples_per_page = dbms_catalog_tuples_per_page(&test_system_catalog);
   for (size_t i = 0; i < tuples_per_page; i++) {
+    insert_attributes[0].int_value = (int32_t)(i);
     tuple_t* insert_tuple = dbms_insert_tuple(test_dbms_session, insert_attributes);
     TEST_ASSERT_NOT_NULL(insert_tuple);
     TEST_ASSERT_EQUAL_UINT64(1, insert_tuple->id.page_id);
+    TEST_ASSERT_EQUAL_UINT64(i, insert_tuple->id.slot_id);
+    TEST_ASSERT_EQUAL_INT((int32_t)(i), insert_tuple->attributes[0].int_value);
     if (i < tuples_per_page - 1) {
       TEST_ASSERT_EQUAL_UINT64((i + 1) * (uint64_t)test_dbms_session->catalog->tuple_size,
                                test_dbms_session->buffer_pool->buffer_pages[0].page->free_space_head);
@@ -146,6 +149,21 @@ static void test_dbms_fill_page() {
   TEST_ASSERT_EQUAL_UINT64(tuples_per_page, test_dbms_session->buffer_pool->buffer_pages[0].page->tuples_per_page);
   TEST_ASSERT_EQUAL_UINT32(1, test_dbms_session->buffer_pool->page_count);
   TEST_ASSERT_EQUAL_UINT32(1, test_dbms_session->page_count);
+
+  dbms_flush_buffer_pool(test_dbms_session);
+  TEST_ASSERT_TRUE(test_dbms_session->buffer_pool->buffer_pages[0].is_free);
+
+  // Now remove tuples out of order to test free space management
+  for (int i = (int)tuples_per_page - 1; i >= 0; i -= 2) {
+    uint64_t tuple_pos_in_page = (uint64_t)i * test_dbms_session->catalog->tuple_size;
+    tuple_t* fetched_tuple = dbms_get_tuple(test_dbms_session, (tuple_id_t){.page_id = 1, .slot_id = (uint64_t)i});
+    TEST_ASSERT_NOT_NULL(fetched_tuple);
+    TEST_ASSERT_EQUAL_UINT64((uint64_t)i, fetched_tuple->id.slot_id);
+    TEST_ASSERT_EQUAL_INT((int32_t)(i), fetched_tuple->attributes[0].int_value);
+    bool delete_result = dbms_delete_tuple(test_dbms_session, (tuple_id_t){.page_id = 1, .slot_id = (uint64_t)i});
+    TEST_ASSERT_TRUE(delete_result);
+    TEST_ASSERT_EQUAL_UINT64(tuple_pos_in_page, test_dbms_session->buffer_pool->buffer_pages[0].page->free_space_head);
+  }
 }
 
 int main() {
@@ -156,7 +174,7 @@ int main() {
   RUN_TEST(test_dbms_session_init);
   RUN_TEST(test_dbms_catalog_num_used);
   RUN_TEST(test_dbms_insert_tuple);
-  RUN_TEST(test_dbms_fill_page);
+  RUN_TEST(test_dbms_fill_and_empty_page);
 
   return UNITY_END();
 }
