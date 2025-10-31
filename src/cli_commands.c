@@ -105,18 +105,19 @@ int cli_insert_command(dbms_session_t* session, char* input_line) {
     if (i > 0) {
       printf(", ");
     }
-    switch (attributes[i].type) {
+    switch (inserted_tuple->attributes[i].type) {
       case ATTRIBUTE_TYPE_INT:
-        printf("%d", attributes[i].int_value);
+        printf("%d", inserted_tuple->attributes[i].int_value);
         break;
       case ATTRIBUTE_TYPE_FLOAT:
-        printf("%f", attributes[i].float_value);
+        printf("%f", inserted_tuple->attributes[i].float_value);
         break;
       case ATTRIBUTE_TYPE_STRING:
-        printf("%s", attributes[i].string_value);
+        printf("%.*s", (int)dbms_get_catalog_record(session->catalog, (uint8_t)i)->attribute_size,
+               inserted_tuple->attributes[i].string_value);
         break;
       case ATTRIBUTE_TYPE_BOOL:
-        printf("%s", attributes[i].bool_value ? "true" : "false");
+        printf("%s", inserted_tuple->attributes[i].bool_value ? "true" : "false");
         break;
     }
   }
