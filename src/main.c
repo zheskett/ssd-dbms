@@ -86,7 +86,7 @@ static bool create_database(const char* filename) {
       fprintf(stderr, "Attribute name cannot be '%s'\n", PADDING_NAME);
       continue;
     }
-    if (strchr(attribute_name, ' ') || strchr(attribute_name, '\t')) {
+    if (strchr(attribute_name, ' ') || strchr(attribute_name, '\t') || strchr(attribute_name, '\n')) {
       fprintf(stderr, "Attribute name cannot contain whitespace\n");
       continue;
     }
@@ -106,9 +106,14 @@ static bool create_database(const char* filename) {
       }
       printf("Enter attribute size (in bytes): ");
       fgets(buffer, sizeof(buffer), stdin);
-      attribute_size = (uint8_t)strtoul(buffer, NULL, 10);
-      if (attribute_size == 0) {
+      long input_size = strtol(buffer, NULL, 10);
+      attribute_size = (uint8_t)input_size;
+      if (input_size <= 0) {
         fprintf(stderr, "Attribute size must be greater than 0\n");
+        continue;
+      }
+      if (input_size > UINT8_MAX) {
+        fprintf(stderr, "Attribute size cannot exceed %d bytes\n", UINT8_MAX);
         continue;
       }
     }

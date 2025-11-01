@@ -176,7 +176,7 @@ int cli_print_command(dbms_session_t* session, char* input_line) {
     return CLI_SUCCESS_RETURN_CODE;
   }
 
-  fprintf(stderr, "Unknown print target: %s\n", tokens[1]);
+  fprintf(stderr, "Unknown print target: %s\n", tokens[0]);
   return CLI_FAILURE_RETURN_CODE;
 }
 
