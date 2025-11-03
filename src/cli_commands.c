@@ -6,9 +6,9 @@
 
 #include "pretty.h"
 
-int cli_exec(dbms_session_t* session, char* input) {
-  if (!session) {
-    fprintf(stderr, "No DBMS session\n");
+int cli_exec(dbms_manager_t* manager, char* input) {
+  if (!manager) {
+    fprintf(stderr, "No DBMS manager\n");
     return CLI_FAILURE_RETURN_CODE;
   }
 
@@ -30,16 +30,44 @@ int cli_exec(dbms_session_t* session, char* input) {
   char* input_line = strtok(NULL, "\n");
 
   // Match command
+  if (strcmp(command, CLI_CREATE_TABLE_COMMAND) == 0) {
+    return cli_create_table_command(manager, input_line);
+  } else if (strcmp(command, CLI_EXIT_COMMAND) == 0) {
+    return CLI_EXIT_RETURN_CODE;
+  } else if (strcmp(command, CLI_OPEN_TABLE_COMMAND) == 0) {
+    return cli_open_command(manager, input_line);
+  }
+
+  // For other commands, the first token is the table name
+  if (input_line == NULL) {
+    fprintf(stderr, "No input line provided for: %s\n", command);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+  size_t session_num = SIZE_MAX;
+  for (size_t i = 0; i < manager->session_count; i++) {
+    if (strcmp(manager->sessions[i]->table_name, command) == 0) {
+      session_num = i;
+      break;
+    }
+  }
+  if (session_num == SIZE_MAX) {
+    fprintf(stderr, "Table '%s' not found in DBMS manager\n", command);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  command = strtok(input_line, " \t\n");
+  input_line = strtok(NULL, "\n");
+
   if (strcmp(command, CLI_INSERT_COMMAND) == 0) {
-    return cli_insert_command(session, input_line);
+    return cli_insert_command(manager->sessions[session_num], input_line);
   } else if (strcmp(command, CLI_PRINT_COMMAND) == 0) {
-    return cli_print_command(session, input_line);
+    return cli_print_command(manager->sessions[session_num], input_line);
   } else if (strcmp(command, CLI_EXIT_COMMAND) == 0) {
     return CLI_EXIT_RETURN_CODE;
   } else if (strcmp(command, CLI_EVICT_COMMAND) == 0) {
-    return cli_evict_command(session, input_line);
+    return cli_evict_command(manager->sessions[session_num], input_line);
   } else if (strcmp(command, CLI_DELETE_COMMAND) == 0) {
-    return cli_delete_command(session, input_line);
+    return cli_delete_command(manager->sessions[session_num], input_line);
   } else {
     fprintf(stderr, "Unknown command: %s\n", command);
     return CLI_FAILURE_RETURN_CODE;
@@ -251,5 +279,179 @@ int cli_delete_command(dbms_session_t* session, char* input_line) {
   }
 
   printf("Tuple (%llu, %llu) deleted successfully\n", page_id, slot_id);
+  return CLI_SUCCESS_RETURN_CODE;
+}
+
+int cli_create_table_command(dbms_manager_t* manager, const char* input_line) {
+  if (!manager) {
+    fprintf(stderr, "Invalid manager\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+  if (!input_line) {
+    fprintf(stderr, "No input line provided for create command\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+  // Assume input_line is the filename
+  const char* filename = input_line;
+  if (strlen(filename) == 0) {
+    fprintf(stderr, "Database filename cannot be empty\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+  if (strchr(filename, ' ') || strchr(filename, '\t') || strchr(filename, '\n')) {
+    fprintf(stderr, "Database filename cannot contain whitespace\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  system_catalog_t catalog = {0};
+  catalog.records = NULL;
+  // First byte determines if a record is null
+  catalog.tuple_size = NULL_BYTE_SIZE;
+  catalog.record_count = 0;
+
+  // Let user define schema
+  while (true) {
+    char attribute_name[CATALOG_ATTRIBUTE_NAME_SIZE];
+    uint8_t attribute_size;
+    uint8_t attribute_type;
+
+    printf("Enter attribute name (or 'finish' to finish): ");
+    fgets(attribute_name, sizeof(attribute_name), stdin);
+    attribute_name[strcspn(attribute_name, "\n")] = '\0';
+    if (strcmp(attribute_name, "finish") == 0) {
+      break;
+    }
+    if (strlen(attribute_name) == 0) {
+      fprintf(stderr, "Attribute name cannot be empty\n");
+      continue;
+    }
+    if (strcmp(attribute_name, PADDING_NAME) == 0) {
+      fprintf(stderr, "Attribute name cannot be '%s'\n", PADDING_NAME);
+      continue;
+    }
+    if (strchr(attribute_name, ' ') || strchr(attribute_name, '\t') || strchr(attribute_name, '\n')) {
+      fprintf(stderr, "Attribute name cannot contain whitespace\n");
+      continue;
+    }
+    if (dbms_get_catalog_record_by_name(&catalog, attribute_name) != NULL) {
+      fprintf(stderr, "Attribute name '%s' already exists in catalog\n", attribute_name);
+      continue;
+    }
+
+    char buffer[16] = {0};
+    printf("Enter attribute type (1=INT, 2=FLOAT, 3=STRING, 4=BOOL): ");
+    fgets(buffer, sizeof(buffer), stdin);
+    attribute_type = (uint8_t)strtoul(buffer, NULL, 10);
+
+    if (attribute_type == ATTRIBUTE_TYPE_STRING) {
+      for (int i = 0; i < 16; i++) {
+        buffer[i] = '\0';
+      }
+      printf("Enter attribute size (in bytes): ");
+      fgets(buffer, sizeof(buffer), stdin);
+      long input_size = strtol(buffer, NULL, 10);
+      attribute_size = (uint8_t)input_size;
+      if (input_size <= 0) {
+        fprintf(stderr, "Attribute size must be greater than 0\n");
+        continue;
+      }
+      if (input_size > UINT8_MAX) {
+        fprintf(stderr, "Attribute size cannot exceed %d bytes\n", UINT8_MAX);
+        continue;
+      }
+    }
+
+    // Check validity of attribute
+    if (attribute_type < ATTRIBUTE_TYPE_INT || attribute_type > ATTRIBUTE_TYPE_BOOL) {
+      fprintf(stderr, "Invalid attribute type: %d\n", attribute_type);
+      continue;
+    }
+    if (attribute_type == ATTRIBUTE_TYPE_INT) {
+      attribute_size = sizeof(int32_t);
+    } else if (attribute_type == ATTRIBUTE_TYPE_FLOAT) {
+      attribute_size = sizeof(float);
+    } else if (attribute_type == ATTRIBUTE_TYPE_BOOL) {
+      attribute_size = sizeof(bool);
+    }
+
+    catalog.record_count++;
+    catalog.tuple_size += attribute_size;
+    catalog.records = realloc(catalog.records, catalog.record_count * sizeof(catalog_record_t));
+
+    if (!catalog.records) {
+      fprintf(stderr, "Memory allocation failed for catalog records\n");
+      dbms_free_catalog_records(catalog);
+      return CLI_FAILURE_RETURN_CODE;
+    }
+
+    catalog_record_t* record = &catalog.records[catalog.record_count - 1];
+    memset(record, 0, sizeof(catalog_record_t));
+    strncpy(record->attribute_name, attribute_name, CATALOG_ATTRIBUTE_NAME_SIZE - 1);
+    record->attribute_size = attribute_size;
+    record->attribute_type = attribute_type;
+    record->attribute_order = catalog.record_count - 1;
+  }
+
+  if (catalog.record_count == 0) {
+    fprintf(stderr, "No attributes defined. Aborting database creation.\n");
+    dbms_free_catalog_records(catalog);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  // Fit records to 8-byte alignment, minimum 16 bytes
+  if (catalog.tuple_size % 8 != 0 || catalog.tuple_size < 16) {
+    uint16_t remaining = 8 - (catalog.tuple_size % 8);
+    if (catalog.tuple_size < 16) {
+      remaining = 16 - catalog.tuple_size;
+    }
+    // Make a padding attribute
+    catalog.record_count++;
+    catalog.tuple_size += remaining;
+    catalog.records = realloc(catalog.records, catalog.record_count * sizeof(catalog_record_t));
+    if (!catalog.records) {
+      fprintf(stderr, "Memory allocation failed for catalog records\n");
+      dbms_free_catalog_records(catalog);
+      return CLI_FAILURE_RETURN_CODE;
+    }
+    catalog_record_t* padding_record = &catalog.records[catalog.record_count - 1];
+    memset(padding_record, 0, sizeof(catalog_record_t));
+    strncpy(padding_record->attribute_name, PADDING_NAME, CATALOG_ATTRIBUTE_NAME_SIZE - 1);
+    padding_record->attribute_size = remaining;
+    padding_record->attribute_type = ATTRIBUTE_TYPE_UNUSED;
+    padding_record->attribute_order = catalog.record_count - 1;
+  }
+
+  dbms_create_db(filename, &catalog);
+
+  printf("Table created successfully: %s\n", filename);
+  printf("Use '%s %s' to open the table.\n", CLI_OPEN_TABLE_COMMAND, filename);
+  dbms_free_catalog_records(catalog);
+  return CLI_SUCCESS_RETURN_CODE;
+}
+
+int cli_open_command(dbms_manager_t* manager, const char* input_line) {
+  if (!manager) {
+    fprintf(stderr, "Invalid manager\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+  if (!input_line) {
+    fprintf(stderr, "No input line provided for open command\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  const char* filename = input_line;
+  if (strlen(filename) == 0) {
+    fprintf(stderr, "Table filename cannot be empty\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  dbms_session_t* session = dbms_init_dbms_session(filename);
+  if (!session) {
+    fprintf(stderr, "Failed to open table: %s\n", filename);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  dbms_add_session(manager, session);
+
+  printf("Table '%s' opened successfully.\n", session->table_name);
   return CLI_SUCCESS_RETURN_CODE;
 }
