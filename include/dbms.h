@@ -89,6 +89,11 @@ typedef struct {
   buffer_pool_t* buffer_pool;
 } dbms_session_t;
 
+typedef struct {
+  dbms_session_t** sessions;
+  size_t session_count;
+} dbms_manager_t;
+
 /**
  * @brief Creates a new database file with the given system catalog
  *
@@ -97,6 +102,38 @@ typedef struct {
  * @return true on success, false on failure
  */
 bool dbms_create_db(const char* filename, const system_catalog_t* catalog);
+
+/**
+ * @brief Initializes the DBMS manager
+ *
+ * @return Pointer to the DBMS manager on success, NULL on failure
+ */
+dbms_manager_t* dbms_init_dbms_manager(void);
+
+/**
+ * @brief Frees the DBMS manager
+ *
+ * @param manager Pointer to the DBMS manager structure
+ */
+void dbms_free_dbms_manager(dbms_manager_t* manager);
+
+/**
+ * @brief Adds a DBMS session to the manager
+ *
+ * @param manager Pointer to the DBMS manager
+ * @param session Pointer to the DBMS session to add
+ * @return true on success, false on failure
+ */
+bool dbms_add_session(dbms_manager_t* manager, dbms_session_t* session);
+
+/**
+ * @brief Removes a DBMS session from the manager
+ *
+ * @param manager Pointer to the DBMS manager
+ * @param session Pointer to the DBMS session to remove
+ * @return true on success, false on failure
+ */
+bool dbms_remove_session(dbms_manager_t* manager, dbms_session_t* session);
 
 /**
  * @brief Initializes a DBMS session

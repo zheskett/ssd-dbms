@@ -56,6 +56,79 @@ bool dbms_create_db(const char* filename, const system_catalog_t* catalog) {
   return true;
 }
 
+dbms_manager_t* dbms_init_dbms_manager(void) {
+  dbms_manager_t* manager = calloc(1, sizeof(dbms_manager_t));
+  if (!manager) {
+    fprintf(stderr, "Memory allocation failed for DBMS manager\n");
+    return NULL;
+  }
+  manager->sessions = NULL;
+  manager->session_count = 0;
+  return manager;
+}
+
+void dbms_free_dbms_manager(dbms_manager_t* manager) {
+  if (manager) {
+    // Free each session
+    for (size_t i = 0; i < manager->session_count; i++) {
+      dbms_free_dbms_session(manager->sessions[i]);
+    }
+    free(manager);
+  }
+}
+
+bool dbms_add_session(dbms_manager_t* manager, dbms_session_t* session) {
+  if (!manager || !session) {
+    return false;
+  }
+
+  dbms_session_t** new_sessions = realloc(manager->sessions, (manager->session_count + 1) * sizeof(dbms_session_t*));
+  if (!new_sessions) {
+    fprintf(stderr, "Memory allocation failed while adding DBMS session\n");
+    return false;
+  }
+
+  manager->sessions = new_sessions;
+  manager->sessions[manager->session_count] = session;
+  manager->session_count++;
+  return true;
+}
+
+bool dbms_remove_session(dbms_manager_t* manager, dbms_session_t* session) {
+  if (!manager || !session) {
+    return false;
+  }
+
+  size_t index = SIZE_MAX;
+  for (size_t i = 0; i < manager->session_count; i++) {
+    if (manager->sessions[i] == session) {
+      index = i;
+      break;
+    }
+  }
+
+  if (index == SIZE_MAX) {
+    fprintf(stderr, "DBMS session not found in manager\n");
+    return false;
+  }
+
+  dbms_free_dbms_session(manager->sessions[index]);
+
+  // Shift remaining sessions
+  for (size_t i = index; i < manager->session_count - 1; i++) {
+    manager->sessions[i] = manager->sessions[i + 1];
+  }
+
+  dbms_session_t** new_sessions = realloc(manager->sessions, (manager->session_count - 1) * sizeof(dbms_session_t*));
+  if (!new_sessions && manager->session_count - 1 > 0) {
+    fprintf(stderr, "Memory allocation failed while removing DBMS session\n");
+    return false;
+  }
+  manager->sessions = new_sessions;
+  manager->session_count--;
+  return true;
+}
+
 dbms_session_t* dbms_init_dbms_session(const char* filename) {
   if (!filename) {
     return NULL;
@@ -80,6 +153,12 @@ dbms_session_t* dbms_init_dbms_session(const char* filename) {
     fprintf(stderr, "Validation failed for table name from filename: %s\n", filename);
     dbms_free_dbms_session(session);
     return NULL;
+  }
+  // Replace whitespace in table name with underscores
+  for (char* p = session->table_name; *p != '\0'; p++) {
+    if (*p == ' ') {
+      *p = '_';
+    }
   }
 
   session->fd = ssdio_open(filename, false);
