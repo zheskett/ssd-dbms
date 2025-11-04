@@ -11,6 +11,10 @@ list(FILTER SRC EXCLUDE REGEX "(.*/src/main\\.c$|.*/src/cli_commands\\.c$)") # E
 add_library(ssd-dbms STATIC ${SRC})
 target_include_directories(ssd-dbms PUBLIC ${CMAKE_SOURCE_DIR}/include PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+target_link_libraries(ssd-dbms PUBLIC Threads::Threads)
+
 # Build the CLI executable
 add_executable(ssd-dbms-cli ${CMAKE_SOURCE_DIR}/src/main.c ${CMAKE_SOURCE_DIR}/src/cli_commands.c)
 target_link_libraries(ssd-dbms-cli PRIVATE ssd-dbms)
