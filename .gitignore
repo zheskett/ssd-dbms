@@ -1,7 +1,6 @@
 .vscode/*
 build/*
-inputs.txt
-test.dat
+*.dat
 
 # Apple Generated files
 .DS_Store
