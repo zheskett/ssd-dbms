@@ -7,14 +7,18 @@ add_compile_options(-Wall)
 
 # Build the static library
 file(GLOB_RECURSE SRC CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/*.c")
-list(FILTER SRC EXCLUDE REGEX ".*/src/main\\.c$")
+list(FILTER SRC EXCLUDE REGEX "(.*/src/main\\.c$|.*/src/cli_commands\\.c$)") # Exclude main.c and cli_commands.c
 add_library(ssd-dbms STATIC ${SRC})
-target_include_directories(ssd-dbms PUBLIC  ${CMAKE_SOURCE_DIR}/include PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(ssd-dbms PUBLIC ${CMAKE_SOURCE_DIR}/include PRIVATE ${CMAKE_SOURCE_DIR}/src)
 
 # Build the CLI executable
-add_executable(ssd-dbms-cli ${CMAKE_SOURCE_DIR}/src/main.c)
+add_executable(ssd-dbms-cli ${CMAKE_SOURCE_DIR}/src/main.c ${CMAKE_SOURCE_DIR}/src/cli_commands.c)
 target_link_libraries(ssd-dbms-cli PRIVATE ssd-dbms)
 target_include_directories(ssd-dbms-cli PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+add_library(linenoise STATIC ${CMAKE_SOURCE_DIR}/vendor/linenoise/linenoise.c)
+target_include_directories(linenoise PUBLIC ${CMAKE_SOURCE_DIR}/vendor/linenoise)
+target_link_libraries(ssd-dbms-cli PRIVATE linenoise)
 
 # Tests
 option(BUILD_TESTS "Build unit tests" ON)

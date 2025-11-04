@@ -7,8 +7,13 @@
 
 #include "cli_commands.h"
 #include "dbms.h"
+#include "linenoise.h"
 #include "pretty.h"
 #include "ssdio.h"
+
+#define CLI_PROMPT "ssd-dbms> "
+#define INPUT_BUFFER_SIZE 1024
+#define HISTORY_SIZE 64
 
 /**
  * @brief CLI entry point

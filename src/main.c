@@ -9,19 +9,29 @@ int main(int argc, char* argv[]) {
     return EXIT_FAILURE;
   }
 
+  // Initialize linenoise
+  linenoiseHistorySetMaxLen(HISTORY_SIZE);
+  linenoiseSetMultiLine(1);
+
   // CLI loop
-  char input[1024];
   while (true) {
-    printf("ssd-dbms> ");
-    if (!fgets(input, sizeof(input), stdin)) {
-      printf("Error reading input. Exiting.\n");
+    char* input = linenoise(CLI_PROMPT);
+    if (input == NULL) {
+      printf("Exiting CLI.\n");
       break;
     }
 
-    // Remove trailing newline
-    input[strcspn(input, "\n")] = '\0';
+    if (strlen(input) == 0) {
+      linenoiseFree(input);
+      continue;
+    }
+
+    linenoiseHistoryAdd(input);
 
     int command_value = cli_exec(manager, input);
+
+    linenoiseFree(input);
+
     if (command_value == CLI_EXIT_RETURN_CODE) {
       printf("Exiting CLI.\n");
       break;
