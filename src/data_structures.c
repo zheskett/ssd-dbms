@@ -124,33 +124,32 @@ static bool linked_list_insert(hash_node_t** head, uint64_t key, uint64_t value)
     return false;
   }
 
+  hash_node_t* current = *head;
+  hash_node_t* previous = NULL;
+
+  while (current && current->key < key) {
+    previous = current;
+    current = current->next;
+  }
+
+  if (current && current->key == key) {
+    current->value = value;
+    return true;
+  }
+
   hash_node_t* new_node = malloc(sizeof(hash_node_t));
   if (!new_node) {
     return false;
   }
   new_node->key = key;
   new_node->value = value;
-  new_node->next = NULL;
+  new_node->next = current;
 
-  if (*head == NULL || (*head)->key > key) {
-    new_node->next = *head;
+  if (previous == NULL) {
     *head = new_node;
-    return true;
+  } else {
+    previous->next = new_node;
   }
-
-  hash_node_t* current = *head;
-  while (current->next != NULL && current->next->key < key) {
-    current = current->next;
-  }
-
-  if (current->key == key) {
-    // Key already exists, update value
-    current->value = value;
-    free(new_node);
-    return true;
-  }
-  new_node->next = current->next;
-  current->next = new_node;
   return true;
 }
 
@@ -162,12 +161,12 @@ static bool linked_list_delete(hash_node_t** head, uint64_t key) {
   hash_node_t* current = *head;
   hash_node_t* previous = NULL;
 
-  while (current != NULL && current->key < key) {
+  while (current && current->key < key) {
     previous = current;
     current = current->next;
   }
 
-  if (current == NULL || current->key != key) {
+  if (!current || current->key != key) {
     return false;  // Key not found
   }
 
@@ -187,10 +186,10 @@ static bool linked_list_get(hash_node_t** head, uint64_t key, uint64_t* value_ou
   }
 
   hash_node_t* current = *head;
-  while (current != NULL && current->key < key) {
+  while (current && current->key < key) {
     current = current->next;
   }
-  if (current != NULL && current->key == key) {
+  if (current && current->key == key) {
     if (value_out) {
       *value_out = current->value;
     }
@@ -205,7 +204,7 @@ static void linked_list_free(hash_node_t** head) {
   }
 
   hash_node_t* current = *head;
-  while (current != NULL) {
+  while (current) {
     hash_node_t* to_free = current;
     current = current->next;
     free(to_free);
