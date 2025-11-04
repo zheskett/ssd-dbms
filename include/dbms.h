@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <unistd.h>
 
+#include "data_structures.h"
+
 #define PAGE_SIZE 8192
 #define DATA_SIZE (PAGE_SIZE - 32)
 #define NULL_BYTE_SIZE 1
@@ -77,6 +79,7 @@ typedef struct {
 
 typedef struct {
   uint32_t page_count;
+  hash_table_t* page_table;
   buffer_page_t buffer_pages[BUFFER_POOL_SIZE];
 } buffer_pool_t;
 
@@ -101,7 +104,7 @@ typedef struct {
  * @param catalog Pointer to the system catalog
  * @return true on success, false on failure
  */
-bool dbms_create_db(const char* filename, const system_catalog_t* catalog);
+bool dbms_create_table(const char* filename, const system_catalog_t* catalog);
 
 /**
  * @brief Initializes the DBMS manager
@@ -198,8 +201,9 @@ buffer_page_t* dbms_run_buffer_pool_policy(dbms_session_t* session);
  *
  * @param session Pointer to the DBMS session
  * @param buffer_page Pointer to the buffer page to flush
+ * @param run_flush Whether to run the flush operation immediately
  */
-void dbms_flush_buffer_page(dbms_session_t* session, buffer_page_t* buffer_page);
+void dbms_flush_buffer_page(dbms_session_t* session, buffer_page_t* buffer_page, bool run_flush);
 
 /**
  * @brief Flushes all dirty pages in the buffer pool to disk

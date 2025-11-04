@@ -11,6 +11,7 @@
 catalog_record_t test_catalog_records[TEST_CATALOG_SIZE] = {0};
 system_catalog_t test_system_catalog = {0};
 dbms_session_t* test_dbms_session = NULL;
+dbms_manager_t* test_dbms_manager = NULL;
 
 void setUp() {
   // Create a system catalog for testing
@@ -29,11 +30,13 @@ void setUp() {
   test_system_catalog.tuple_size = tuple_size;
   test_system_catalog.record_count = sizeof(test_catalog_records_temp) / sizeof(catalog_record_t);
 
-  dbms_create_db(DB_PATH, &test_system_catalog);
+  dbms_create_table(DB_PATH, &test_system_catalog);
+  test_dbms_manager = dbms_init_dbms_manager();
   test_dbms_session = dbms_init_dbms_session(DB_PATH);
+  dbms_add_session(test_dbms_manager, test_dbms_session);
 }
 void tearDown() {
-  dbms_free_dbms_session(test_dbms_session);
+  dbms_free_dbms_manager(test_dbms_manager);
   remove(DB_PATH);
 }
 

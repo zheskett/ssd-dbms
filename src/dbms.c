@@ -7,7 +7,7 @@
 #include "align.h"
 #include "ssdio.h"
 
-bool dbms_create_db(const char* filename, const system_catalog_t* catalog) {
+bool dbms_create_table(const char* filename, const system_catalog_t* catalog) {
   if (!filename || !catalog) {
     return false;
   }
@@ -72,6 +72,11 @@ void dbms_free_dbms_manager(dbms_manager_t* manager) {
     // Free each session
     for (size_t i = 0; i < manager->session_count; i++) {
       dbms_free_dbms_session(manager->sessions[i]);
+    }
+    manager->session_count = 0;
+    if (manager->sessions) {
+      free(manager->sessions);
+      manager->sessions = NULL;
     }
     free(manager);
   }
@@ -198,6 +203,14 @@ dbms_session_t* dbms_init_dbms_session(const char* filename) {
   }
 
   session->buffer_pool->page_count = 0;
+
+  session->buffer_pool->page_table = hash_table_init(BUFFER_POOL_SIZE);
+  if (!session->buffer_pool->page_table) {
+    fprintf(stderr, "Memory allocation failed for buffer pool page table\n");
+    dbms_free_dbms_session(session);
+    return NULL;
+  }
+
   // Need to align pages for O_DIRECT
   page_t* pages = aligned_alloc(PAGE_SIZE, BUFFER_POOL_SIZE * sizeof(page_t));
   if (!pages) {
@@ -275,6 +288,7 @@ void dbms_free_dbms_session(dbms_session_t* session) {
 
 void dbms_free_buffer_pool(buffer_pool_t* pool) {
   if (pool) {
+    hash_table_free(pool->page_table);
     // Free each page in the buffer pages
     // They are allocated all together, so just free first one
     if (pool->buffer_pages[0].page) {
@@ -317,11 +331,11 @@ buffer_page_t* dbms_get_buffer_page(dbms_session_t* session, uint64_t page_id) {
   }
 
   // Check if page is already in buffer pool
-  for (uint32_t i = 0; i < BUFFER_POOL_SIZE; i++) {
-    buffer_page_t* buffer_page = &session->buffer_pool->buffer_pages[i];
-    if (!buffer_page->is_free && buffer_page->page_id == page_id) {
-      return buffer_page;
-    }
+  uint64_t buffer_page_index = 0;
+  if (hash_table_get(session->buffer_pool->page_table, page_id, &buffer_page_index)) {
+    buffer_page_t* buffer_page = &session->buffer_pool->buffer_pages[buffer_page_index];
+    buffer_page->last_updated = session->update_ctr++;
+    return buffer_page;
   }
 
   // Page not found in buffer pool, get a free page or evict one
@@ -334,6 +348,13 @@ buffer_page_t* dbms_get_buffer_page(dbms_session_t* session, uint64_t page_id) {
   // Load the requested page from disk
   if (!ssdio_read_page(session->fd, page_id, target_page->page)) {
     fprintf(stderr, "Failed to read page %llu from disk\n", page_id);
+    return NULL;
+  }
+
+  // Insert into page table
+  uint64_t target_index = (target_page - session->buffer_pool->buffer_pages) / sizeof(buffer_page_t);
+  if (!hash_table_insert(session->buffer_pool->page_table, page_id, target_index)) {
+    fprintf(stderr, "Failed to insert page %llu into buffer pool page table\n", page_id);
     return NULL;
   }
 
@@ -392,7 +413,7 @@ buffer_page_t* dbms_run_buffer_pool_policy(dbms_session_t* session) {
     return NULL;
   }
 
-  // Still free space in buffer pool
+  // TODO: Optimize this search?
   if (session->buffer_pool->page_count < BUFFER_POOL_SIZE) {
     // There is still free space in the buffer pool
     for (uint32_t i = 0; i < BUFFER_POOL_SIZE; i++) {
@@ -407,7 +428,7 @@ buffer_page_t* dbms_run_buffer_pool_policy(dbms_session_t* session) {
   return NULL;
 }
 
-void dbms_flush_buffer_page(dbms_session_t* session, buffer_page_t* buffer_page) {
+void dbms_flush_buffer_page(dbms_session_t* session, buffer_page_t* buffer_page, bool run_flush) {
   if (!session || !buffer_page) {
     return;
   }
@@ -418,12 +439,14 @@ void dbms_flush_buffer_page(dbms_session_t* session, buffer_page_t* buffer_page)
       return;
     }
 
-    // TODO: Better flushing
-    ssdio_flush(session->fd);
+    if (run_flush) {
+      ssdio_flush(session->fd);
+    }
   }
 
   if (!buffer_page->is_free) {
     session->buffer_pool->page_count--;
+    hash_table_delete(session->buffer_pool->page_table, buffer_page->page_id);
   }
 
   buffer_page->last_updated = 0;
@@ -435,8 +458,9 @@ void dbms_flush_buffer_page(dbms_session_t* session, buffer_page_t* buffer_page)
 void dbms_flush_buffer_pool(dbms_session_t* session) {
   for (uint32_t i = 0; i < BUFFER_POOL_SIZE; i++) {
     buffer_page_t* buffer_page = &session->buffer_pool->buffer_pages[i];
-    dbms_flush_buffer_page(session, buffer_page);
+    dbms_flush_buffer_page(session, buffer_page, false);
   }
+  ssdio_flush(session->fd);
 }
 
 off_t dbms_get_attribute_offset(const system_catalog_t* catalog, uint8_t attribute_position) {
@@ -532,6 +556,7 @@ buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session) {
   }
 
   // Check if any pages in buffer pool have free space
+  // TODO: Optimize this search?
   for (uint32_t i = 0; i < BUFFER_POOL_SIZE; i++) {
     buffer_page_t* buffer_page = &session->buffer_pool->buffer_pages[i];
     if (!buffer_page->is_free) {
@@ -546,6 +571,7 @@ buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session) {
   // No pages in buffer pool have free space, need to load a new page
   // TODO: Load actual pages with free space from disk
   buffer_page_t* target_page = dbms_get_buffer_page(session, 1);
+
   if (!target_page) {
     fprintf(stderr, "Failed to load page with free space from disk\n");
     return NULL;
