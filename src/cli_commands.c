@@ -222,29 +222,21 @@ int cli_evict_command(dbms_session_t* session, char* input_line) {
   }
 
   uint64_t page_id = strtoull(token, NULL, 10);
-  if (page_id <= 0 || page_id > session->buffer_pool->page_count) {
+  if (page_id <= 0 || page_id > session->page_count) {
     fprintf(stderr, "Invalid page number: %llu\n", page_id);
     return CLI_FAILURE_RETURN_CODE;
   }
 
   // Check if page is in buffer pool
-  // TODO: Optimize this search
-  buffer_page_t* buffer_page = NULL;
-  for (uint32_t i = 0; i < BUFFER_POOL_SIZE; i++) {
-    if (!session->buffer_pool->buffer_pages[i].is_free && session->buffer_pool->buffer_pages[i].page_id == page_id) {
-      buffer_page = &session->buffer_pool->buffer_pages[i];
-      break;
-    }
-  }
-
-  if (!buffer_page) {
-    printf("Page %llu is not in buffer pool\n", page_id);
+  uint64_t buffer_page_index = 0;
+  if (!hash_table_get(session->buffer_pool->page_table, page_id, &buffer_page_index)) {
+    fprintf(stderr, "Page %llu is not in buffer pool\n", page_id);
     return CLI_FAILURE_RETURN_CODE;
   }
+  buffer_page_t* buffer_page = &session->buffer_pool->buffer_pages[buffer_page_index];
 
   // Evict page from buffer pool
-  dbms_flush_buffer_page(session, buffer_page);
-
+  dbms_flush_buffer_page(session, buffer_page, true);
   printf("Page %llu evicted from buffer pool\n", page_id);
 
   return CLI_SUCCESS_RETURN_CODE;
@@ -420,7 +412,7 @@ int cli_create_table_command(dbms_manager_t* manager, const char* input_line) {
     padding_record->attribute_order = catalog.record_count - 1;
   }
 
-  dbms_create_db(filename, &catalog);
+  dbms_create_table(filename, &catalog);
 
   printf("Table created successfully: %s\n", filename);
   printf("Use '%s %s' to open the table.\n", CLI_OPEN_TABLE_COMMAND, filename);
