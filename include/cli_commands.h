@@ -6,12 +6,13 @@
 #define CLI_EXIT_COMMAND "exit"
 #define CLI_EVICT_COMMAND "evict"
 #define CLI_DELETE_COMMAND "delete"
+#define CLI_UPDATE_COMMAND "update"
+#define CLI_FILL_COMMAND "fill"
 
 #define CLI_CREATE_TABLE_COMMAND "create"
 #define CLI_OPEN_TABLE_COMMAND "open"
 #define CLI_SPLIT_COMMAND "split"
 #define CLI_TIME_COMMAND "time"
-#define CLI_FILL_COMMAND "fill"
 
 #define MAX_SPLITS 16
 
@@ -73,6 +74,15 @@ int cli_evict_command(dbms_session_t* session, char* input_line);
  * @return CLI return code
  */
 int cli_delete_command(dbms_session_t* session, char* input_line);
+
+/**
+ * @brief Executes the update command
+ *
+ * @param session Pointer to the DBMS session
+ * @param input_line Input line containing update parameters
+ * @return CLI return code
+ */
+int cli_update_command(dbms_session_t* session, char* input_line);
 
 /**
  * @brief Executes the fill command

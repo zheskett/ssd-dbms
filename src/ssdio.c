@@ -17,35 +17,30 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-int ssdio_open(const char* filename, bool overwrite) {
+int ssdio_open(const char* filename, bool is_new) {
   // Open file with appropriate flags based on OS
   // 0644 says read/write for owner, read for group and others
   int fd = -1;
+  int flags = O_RDWR | O_CLOEXEC | O_BINARY | (is_new ? O_CREAT | O_TRUNC : 0);
+  int mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
 #if defined(ON_LINUX)
-  fd = open(filename, O_RDWR | O_CREAT | O_CLOEXEC | O_DIRECT | O_BINARY, 0644);
+  fd = open(filename, flags | O_DIRECT, mode);
   if (fd >= 0) {
     // Try to not use read-ahead on Linux
     posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM);
   }
 #elif defined(ON_MAC)
-  fd = open(filename, O_RDWR | O_CREAT | O_CLOEXEC | O_BINARY, 0644);
-  if (fd != -1) {
+  fd = open(filename, flags, mode);
+  if (fd >= 0) {
     // macOS does not support O_DIRECT; use fcntl to set F_NOCACHE
     fcntl(fd, F_NOCACHE, 1);
     fcntl(fd, F_RDAHEAD, 0);
   }
 #else
-  fd = open(filename, O_RDWR | O_CREAT | O_CLOEXEC | O_BINARY, 0644);
+  fd = open(filename, flags, mode);
 #endif
   if (fd < 0) {
     return -1;
-  }
-
-  if (overwrite) {
-    if (ftruncate(fd, 0) != 0) {
-      close(fd);
-      return -1;
-    }
   }
 
   return fd;

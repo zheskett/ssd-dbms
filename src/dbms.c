@@ -151,15 +151,21 @@ dbms_session_t* dbms_init_dbms_session(const char* filename) {
 
   session->fd = -1;
   session->update_ctr = 0;
+  session->filename = strdup(filename);
+  if (!session->filename) {
+    fprintf(stderr, "Memory allocation failed for filename\n");
+    dbms_free_dbms_session(session);
+    return NULL;
+  }
 
   // Only keep ending filename as table name, remove path and extension
-  const char* last_slash = strrchr(filename, '/');
-  const char* base_name = last_slash ? last_slash + 1 : filename;
+  const char* last_slash = strrchr(session->filename, '/');
+  const char* base_name = last_slash ? last_slash + 1 : session->filename;
   const char* last_dot = strrchr(base_name, '.');
   size_t name_length = last_dot && (last_dot - base_name > 0) ? (size_t)(last_dot - base_name) : strlen(base_name);
   session->table_name = strndup(base_name, name_length);
   if (!session->table_name || strlen(session->table_name) == 0) {
-    fprintf(stderr, "Validation failed for table name from filename: %s\n", filename);
+    fprintf(stderr, "Validation failed for table name from filename: %s\n", session->filename);
     dbms_free_dbms_session(session);
     return NULL;
   }
@@ -285,6 +291,9 @@ void dbms_free_dbms_session(dbms_session_t* session) {
     }
     if (session->table_name) {
       free(session->table_name);
+    }
+    if (session->filename) {
+      free(session->filename);
     }
     free(session);
   }

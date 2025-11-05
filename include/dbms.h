@@ -88,6 +88,7 @@ typedef struct {
   uint32_t update_ctr;
   uint32_t page_count;
   char* table_name;
+  char* filename;
   system_catalog_t* catalog;
   buffer_pool_t* buffer_pool;
 } dbms_session_t;

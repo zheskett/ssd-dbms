@@ -7,6 +7,11 @@
 
 #include "pretty.h"
 
+static bool populate_attribute_values_from_tokens(system_catalog_t* catalog, char** tokens, uint8_t num_attributes,
+                                                  attribute_value_t* attributes);
+
+static void print_tuple_info(tuple_t* tuple, uint8_t num_attributes, system_catalog_t* catalog);
+
 static int cli_table_exec(dbms_session_t* session, char* input_line) {
   char* save_ptr = NULL;
   char* command = strtok_r(input_line, " \t\n", &save_ptr);
@@ -22,6 +27,8 @@ static int cli_table_exec(dbms_session_t* session, char* input_line) {
     return cli_evict_command(session, input_line);
   } else if (strcmp(command, CLI_DELETE_COMMAND) == 0) {
     return cli_delete_command(session, input_line);
+  } else if (strcmp(command, CLI_UPDATE_COMMAND) == 0) {
+    return cli_update_command(session, input_line);
   } else if (strcmp(command, CLI_FILL_COMMAND) == 0) {
     return cli_fill_command(session, input_line);
   } else {
@@ -129,28 +136,8 @@ int cli_insert_command(dbms_session_t* session, char* input_line) {
   }
 
   attribute_value_t attributes[num_attributes];
-  for (int i = 0; i < num_attributes; i++) {
-    uint8_t attribute_type = dbms_get_catalog_record(session->catalog, i)->attribute_type;
-    char* attribute_str = tokens[i];
-    attributes[i].type = attribute_type;
-
-    switch (attribute_type) {
-      case ATTRIBUTE_TYPE_INT:
-        attributes[i].int_value = atoi(attribute_str);
-        break;
-      case ATTRIBUTE_TYPE_FLOAT:
-        attributes[i].float_value = (float)atof(attribute_str);
-        break;
-      case ATTRIBUTE_TYPE_STRING:
-        attributes[i].string_value = attribute_str;
-        break;
-      case ATTRIBUTE_TYPE_BOOL:
-        attributes[i].bool_value = (bool)(strcmp(attribute_str, "true") == 0 || strcmp(attribute_str, "1") == 0);
-        break;
-      default:
-        fprintf(stderr, "Unknown attribute type: %u\n", attribute_type);
-        return CLI_FAILURE_RETURN_CODE;
-    }
+  if (!populate_attribute_values_from_tokens(session->catalog, tokens, num_attributes, attributes)) {
+    return CLI_FAILURE_RETURN_CODE;
   }
 
   // Insert tuple into DBMS
@@ -160,28 +147,8 @@ int cli_insert_command(dbms_session_t* session, char* input_line) {
     return CLI_FAILURE_RETURN_CODE;
   }
 
-  printf("TID (%llu, %llu) (", inserted_tuple->id.page_id, inserted_tuple->id.slot_id);
-  for (int i = 0; i < num_attributes; i++) {
-    if (i > 0) {
-      printf(", ");
-    }
-    switch (inserted_tuple->attributes[i].type) {
-      case ATTRIBUTE_TYPE_INT:
-        printf("%d", inserted_tuple->attributes[i].int_value);
-        break;
-      case ATTRIBUTE_TYPE_FLOAT:
-        printf("%f", inserted_tuple->attributes[i].float_value);
-        break;
-      case ATTRIBUTE_TYPE_STRING:
-        printf("%.*s", (int)dbms_get_catalog_record(session->catalog, (uint8_t)i)->attribute_size,
-               inserted_tuple->attributes[i].string_value);
-        break;
-      case ATTRIBUTE_TYPE_BOOL:
-        printf("%s", inserted_tuple->attributes[i].bool_value ? "true" : "false");
-        break;
-    }
-  }
-  printf(") inserted\n");
+  print_tuple_info(inserted_tuple, num_attributes, session->catalog);
+  printf(" inserted\n");
 
   return CLI_SUCCESS_RETURN_CODE;
 }
@@ -309,6 +276,57 @@ int cli_delete_command(dbms_session_t* session, char* input_line) {
   return CLI_SUCCESS_RETURN_CODE;
 }
 
+int cli_update_command(dbms_session_t* session, char* input_line) {
+  if (!session || !input_line) {
+    fprintf(stderr, "Invalid session or input line\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  // Tokenize input line
+  char* save_ptr = NULL;
+  char* tokens[258];
+  int token_count = 0;
+  char* token = strtok_r(input_line, " \t\n", &save_ptr);
+  while (token && token_count < 258) {
+    tokens[token_count++] = token;
+    token = strtok_r(NULL, " \t\n", &save_ptr);
+  }
+
+  if (token_count < 3) {
+    fprintf(stderr, "Usage: update <page_number> <slot_number> <attribute1, attribute2, ...>\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  uint64_t page_id = strtoull(tokens[0], NULL, 10);
+  uint64_t slot_id = strtoull(tokens[1], NULL, 10);
+  tuple_id_t tuple_id = {page_id, slot_id};
+
+  // Convert tokens to attribute values
+  uint8_t num_attributes = dbms_catalog_num_used(session->catalog);
+  int attribute_token_count = token_count - 2;
+  char** attribute_tokens = &tokens[2];
+  if (attribute_token_count != num_attributes) {
+    fprintf(stderr, "Attribute count mismatch: expected %u, got %d\n", num_attributes, attribute_token_count);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  attribute_value_t attributes[num_attributes];
+  if (!populate_attribute_values_from_tokens(session->catalog, attribute_tokens, num_attributes, attributes)) {
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  tuple_t* updated_tuple = dbms_update_tuple(session, tuple_id, attributes);
+  if (!updated_tuple) {
+    fprintf(stderr, "Failed to update tuple (%llu, %llu)\n", page_id, slot_id);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  print_tuple_info(updated_tuple, num_attributes, session->catalog);
+  printf(" updated\n");
+
+  return CLI_SUCCESS_RETURN_CODE;
+}
+
 int cli_fill_command(dbms_session_t* session, char* input_line) {
   if (!session || !input_line) {
     fprintf(stderr, "Invalid session or input line\n");
@@ -402,6 +420,15 @@ int cli_create_table_command(dbms_manager_t* manager, const char* input_line) {
     fprintf(stderr, "Database filename cannot be empty\n");
     return CLI_FAILURE_RETURN_CODE;
   }
+
+  // Check if filename exists in manager
+  for (size_t i = 0; i < manager->session_count; i++) {
+    if (strcmp(manager->sessions[i]->filename, filename) == 0) {
+      fprintf(stderr, "Database file '%s' in use by DBMS manager\n", filename);
+      return CLI_FAILURE_RETURN_CODE;
+    }
+  }
+
   if (strchr(filename, ' ') || strchr(filename, '\t') || strchr(filename, '\n')) {
     fprintf(stderr, "Database filename cannot contain whitespace\n");
     return CLI_FAILURE_RETURN_CODE;
@@ -555,7 +582,20 @@ int cli_open_command(dbms_manager_t* manager, const char* input_line) {
     return CLI_FAILURE_RETURN_CODE;
   }
 
-  dbms_add_session(manager, session);
+  // Check if duplicate table name in manager
+  for (size_t i = 0; i < manager->session_count; i++) {
+    if (strcmp(manager->sessions[i]->table_name, session->table_name) == 0) {
+      fprintf(stderr, "Table name '%s' already exists in DBMS manager\n", session->table_name);
+      dbms_free_dbms_session(session);
+      return CLI_FAILURE_RETURN_CODE;
+    }
+  }
+
+  if (!dbms_add_session(manager, session)) {
+    fprintf(stderr, "Failed to add session to DBMS manager\n");
+    dbms_free_dbms_session(session);
+    return CLI_FAILURE_RETURN_CODE;
+  }
 
   printf("Table '%s' opened successfully.\n", session->table_name);
   return CLI_SUCCESS_RETURN_CODE;
@@ -730,4 +770,57 @@ int cli_time_command(dbms_manager_t* manager, char* input_line) {
   printf("Command executed in %.5f seconds\n", elapsed_time);
 
   return CLI_SUCCESS_RETURN_CODE;
+}
+
+static bool populate_attribute_values_from_tokens(system_catalog_t* catalog, char** tokens, uint8_t num_attributes,
+                                                  attribute_value_t* attributes) {
+  for (int i = 0; i < num_attributes; i++) {
+    uint8_t attribute_type = dbms_get_catalog_record(catalog, i)->attribute_type;
+    char* attribute_str = tokens[i];
+    attributes[i].type = attribute_type;
+
+    switch (attribute_type) {
+      case ATTRIBUTE_TYPE_INT:
+        attributes[i].int_value = atoi(attribute_str);
+        break;
+      case ATTRIBUTE_TYPE_FLOAT:
+        attributes[i].float_value = (float)atof(attribute_str);
+        break;
+      case ATTRIBUTE_TYPE_STRING:
+        attributes[i].string_value = attribute_str;
+        break;
+      case ATTRIBUTE_TYPE_BOOL:
+        attributes[i].bool_value = (bool)(strcmp(attribute_str, "true") == 0 || strcmp(attribute_str, "1") == 0);
+        break;
+      default:
+        fprintf(stderr, "Unknown attribute type: %u\n", attribute_type);
+        return false;
+    }
+  }
+  return true;
+}
+
+static void print_tuple_info(tuple_t* tuple, uint8_t num_attributes, system_catalog_t* catalog) {
+  printf("TID (%llu, %llu) (", tuple->id.page_id, tuple->id.slot_id);
+  for (int i = 0; i < num_attributes; i++) {
+    if (i > 0) {
+      printf(", ");
+    }
+    switch (tuple->attributes[i].type) {
+      case ATTRIBUTE_TYPE_INT:
+        printf("%d", tuple->attributes[i].int_value);
+        break;
+      case ATTRIBUTE_TYPE_FLOAT:
+        printf("%f", tuple->attributes[i].float_value);
+        break;
+      case ATTRIBUTE_TYPE_STRING:
+        printf("%.*s", (int)dbms_get_catalog_record(catalog, (uint8_t)i)->attribute_size,
+               tuple->attributes[i].string_value);
+        break;
+      case ATTRIBUTE_TYPE_BOOL:
+        printf("%s", tuple->attributes[i].bool_value ? "true" : "false");
+        break;
+    }
+  }
+  printf(")");
 }
