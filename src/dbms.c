@@ -7,6 +7,10 @@
 #include "align.h"
 #include "ssdio.h"
 
+// Replace tuple data in buffer and in physical page
+static tuple_t* replace_tuple_data(dbms_session_t* session, tuple_t* tuple, buffer_page_t* buffer_page,
+                                   attribute_value_t* attributes);
+
 bool dbms_create_table(const char* filename, const system_catalog_t* catalog) {
   if (!filename || !catalog) {
     return false;
@@ -614,46 +618,34 @@ tuple_t* dbms_insert_tuple(dbms_session_t* session, attribute_value_t* attribute
   // Write attribute values into the page and into the tuples
   uint64_t slot_id = free_space_offset / session->catalog->tuple_size;
   tuple_t* tuple = &target_page->tuples[slot_id];
-  char* tuple_page_loc = &page->data[free_space_offset];
-  uint8_t num_attributes = dbms_catalog_num_used(session->catalog);
 
-  tuple_page_loc[0] = 1;  // Mark as not null
-  // Zero out the rest of the tuple data
-  memset(tuple_page_loc + NULL_BYTE_SIZE, 0, session->catalog->tuple_size - NULL_BYTE_SIZE);
-  tuple->is_null = false;
-  off_t offset = NULL_BYTE_SIZE;
-  for (uint8_t i = 0; i < num_attributes; i++) {
-    catalog_record_t* record = dbms_get_catalog_record(session->catalog, i);
-    char* page_attribute_ptr = tuple_page_loc + offset;
-    attribute_value_t* tuple_attr = &tuple->attributes[i];
-    switch (record->attribute_type) {
-      case ATTRIBUTE_TYPE_INT:
-        tuple_attr->int_value = attributes[i].int_value;
-        store_u32(page_attribute_ptr, (uint32_t)attributes[i].int_value);
-        break;
-      case ATTRIBUTE_TYPE_FLOAT:
-        tuple_attr->float_value = attributes[i].float_value;
-        store_f32(page_attribute_ptr, attributes[i].float_value);
-        break;
-      case ATTRIBUTE_TYPE_STRING:
-        // This should have size effect of also affecting the tuple string value
-        memcpy(page_attribute_ptr, attributes[i].string_value,
-               strnlen(attributes[i].string_value, record->attribute_size));
-        break;
-      case ATTRIBUTE_TYPE_BOOL:
-        tuple_attr->bool_value = attributes[i].bool_value;
-        store_u8(page_attribute_ptr, attributes[i].bool_value ? 1 : 0);
-        break;
-      default:
-        break;
-    }
-    offset += record->attribute_size;
+  return replace_tuple_data(session, tuple, target_page, attributes);
+}
+
+tuple_t* dbms_update_tuple(dbms_session_t* session, tuple_id_t tuple_id, attribute_value_t* new_attributes) {
+  if (!session || !new_attributes) {
+    return NULL;
   }
 
-  target_page->is_dirty = true;
-  target_page->last_updated = session->update_ctr++;
+  buffer_page_t* buffer_page = dbms_get_buffer_page(session, tuple_id.page_id);
+  if (!buffer_page) {
+    return NULL;
+  }
 
-  return tuple;
+  uint64_t tuples_per_page = dbms_catalog_tuples_per_page(session->catalog);
+  if (tuple_id.slot_id >= tuples_per_page) {
+    fprintf(stderr, "Invalid slot ID %llu for page ID %llu\n", tuple_id.slot_id, tuple_id.page_id);
+    return NULL;
+  }
+
+  // Make sure tuple is not null
+  tuple_t* tuple = &buffer_page->tuples[tuple_id.slot_id];
+  if (tuple->is_null) {
+    fprintf(stderr, "Tuple %llu:%llu is null and cannot be updated\n", tuple_id.page_id, tuple_id.slot_id);
+    return NULL;
+  }
+
+  return replace_tuple_data(session, tuple, buffer_page, new_attributes);
 }
 
 bool dbms_delete_tuple(dbms_session_t* session, tuple_id_t tuple_id) {
@@ -721,5 +713,54 @@ tuple_t* dbms_get_tuple(dbms_session_t* session, tuple_id_t tuple_id) {
     return NULL;
   }
 
+  return tuple;
+}
+
+static tuple_t* replace_tuple_data(dbms_session_t* session, tuple_t* tuple, buffer_page_t* buffer_page,
+                                   attribute_value_t* attributes) {
+  if (!session || !tuple || !buffer_page || !attributes) {
+    return NULL;
+  }
+
+  page_t* page = buffer_page->page;
+  uint64_t free_space_offset = tuple->id.slot_id * session->catalog->tuple_size;
+  char* tuple_page_loc = &page->data[free_space_offset];
+  uint8_t num_attributes = dbms_catalog_num_used(session->catalog);
+
+  tuple_page_loc[0] = 1;  // Mark as not null
+  // Zero out the rest of the tuple data
+  memset(tuple_page_loc + NULL_BYTE_SIZE, 0, session->catalog->tuple_size - NULL_BYTE_SIZE);
+  tuple->is_null = false;
+  off_t offset = NULL_BYTE_SIZE;
+  for (uint8_t i = 0; i < num_attributes; i++) {
+    catalog_record_t* record = dbms_get_catalog_record(session->catalog, i);
+    char* page_attribute_ptr = tuple_page_loc + offset;
+    attribute_value_t* tuple_attr = &tuple->attributes[i];
+    switch (record->attribute_type) {
+      case ATTRIBUTE_TYPE_INT:
+        tuple_attr->int_value = attributes[i].int_value;
+        store_u32(page_attribute_ptr, (uint32_t)attributes[i].int_value);
+        break;
+      case ATTRIBUTE_TYPE_FLOAT:
+        tuple_attr->float_value = attributes[i].float_value;
+        store_f32(page_attribute_ptr, attributes[i].float_value);
+        break;
+      case ATTRIBUTE_TYPE_STRING:
+        // This should have size effect of also affecting the tuple string value
+        memcpy(page_attribute_ptr, attributes[i].string_value,
+               strnlen(attributes[i].string_value, record->attribute_size));
+        break;
+      case ATTRIBUTE_TYPE_BOOL:
+        tuple_attr->bool_value = attributes[i].bool_value;
+        store_u8(page_attribute_ptr, attributes[i].bool_value ? 1 : 0);
+        break;
+      default:
+        break;
+    }
+    offset += record->attribute_size;
+  }
+
+  buffer_page->is_dirty = true;
+  buffer_page->last_updated = session->update_ctr++;
   return tuple;
 }
