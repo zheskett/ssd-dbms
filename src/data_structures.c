@@ -2,18 +2,6 @@
 
 #include <stdlib.h>
 
-// FNV-1a hash function for 64-bit keys
-// From https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function
-static uint64_t fnv1a_hash(uint64_t key) {
-  uint64_t hash = FNV_OFFSET_BASIS_64;
-  for (size_t i = 0; i < sizeof(uint64_t); i++) {
-    uint8_t byte_of_data = (key >> (i * 8)) & 0xff;
-    hash ^= byte_of_data;
-    hash *= FNV_PRIME_64;
-  }
-  return hash;
-}
-
 /**
  * @brief Inserts a key-value pair into the linked list in sorted order
  *
@@ -49,6 +37,16 @@ static bool linked_list_get(hash_node_t** head, uint64_t key, uint64_t* value_ou
  * @param head Pointer to the head of the linked list
  */
 static void linked_list_free(hash_node_t** head);
+
+uint64_t fnv1a_hash(uint64_t key) {
+  uint64_t hash = FNV_OFFSET_BASIS_64;
+  for (size_t i = 0; i < sizeof(uint64_t); i++) {
+    uint8_t byte_of_data = (key >> (i * 8)) & 0xff;
+    hash ^= byte_of_data;
+    hash *= FNV_PRIME_64;
+  }
+  return hash;
+}
 
 hash_table_t* hash_table_init(size_t bucket_count) {
   if (bucket_count == 0) {

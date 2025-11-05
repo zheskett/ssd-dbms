@@ -20,6 +20,15 @@ typedef struct {
 } hash_table_t;
 
 /**
+ * @brief FNV-1a hash function for 64-bit keys
+ *
+ * @param key The 64-bit key to hash
+ * @return uint64_t The hashed value
+ * @note From https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function
+ */
+uint64_t fnv1a_hash(uint64_t key);
+
+/**
  * @brief Initializes a hash table
  *
  * @param bucket_count Number of buckets in the hash table
