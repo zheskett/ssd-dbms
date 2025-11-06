@@ -216,13 +216,36 @@ int cli_evict_command(dbms_session_t* session, char* input_line) {
 
   // Tokenize input line
   char* save_ptr = NULL;
+  char* tokens[2];
+  int token_count = 0;
   char* token = strtok_r(input_line, " \t\n", &save_ptr);
-  if (!token) {
-    fprintf(stderr, "Usage: evict <page_number>\n");
+  while (token && token_count < 2) {
+    tokens[token_count++] = token;
+    token = strtok_r(NULL, " \t\n", &save_ptr);
+  }
+
+  if (token_count < 1) {
+    fprintf(stderr, "Usage: evict <page|all> [page_number]\n");
     return CLI_FAILURE_RETURN_CODE;
   }
 
-  uint64_t page_id = strtoull(token, NULL, 10);
+  if (strcmp(tokens[0], "all") == 0) {
+    dbms_flush_buffer_pool(session);
+    printf("All pages evicted from buffer pool\n");
+    return CLI_SUCCESS_RETURN_CODE;
+  }
+
+  if (strcmp(tokens[0], "page") != 0) {
+    fprintf(stderr, "Usage: evict <page|all> [page_number]\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  if (token_count < 2) {
+    fprintf(stderr, "Usage: evict page <page_number>\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  uint64_t page_id = strtoull(tokens[1], NULL, 10);
   if (page_id <= 0 || page_id > session->page_count) {
     fprintf(stderr, "Invalid page number: %llu\n", page_id);
     return CLI_FAILURE_RETURN_CODE;
