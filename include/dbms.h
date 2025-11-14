@@ -22,7 +22,7 @@
 #define ATTRIBUTE_TYPE_BOOL 4
 
 // TODO: Create buffer pool
-#define BUFFER_POOL_SIZE 1
+#define BUFFER_POOL_SIZE 4
 
 #define PADDING_NAME "PADDING"
 
