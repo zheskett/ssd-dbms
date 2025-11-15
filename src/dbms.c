@@ -270,6 +270,15 @@ dbms_session_t* dbms_init_dbms_session(const char* filename) {
         catalog_record_t* record = dbms_get_catalog_record(session->catalog, k);
         if (record) {
           tuple->attributes[k].type = record->attribute_type;
+          if (record->attribute_type == ATTRIBUTE_TYPE_STRING) {
+            // Tuples allocate their own string storage to guarantee null-termination
+            tuple->attributes[k].string_value = calloc(record->attribute_size + 1, sizeof(char));
+            if (!tuple->attributes[k].string_value) {
+              fprintf(stderr, "Memory allocation failed for tuple string attribute value\n");
+              dbms_free_dbms_session(session);
+              return NULL;
+            }
+          }
         }
       }
     }
@@ -283,11 +292,11 @@ void dbms_free_dbms_session(dbms_session_t* session) {
     if (session->fd != -1) {
       ssdio_close(session->fd);
     }
+    if (session->buffer_pool) {
+      dbms_free_buffer_pool(session->catalog, session->buffer_pool);
+    }
     if (session->catalog) {
       dbms_free_system_catalog(session->catalog);
-    }
-    if (session->buffer_pool) {
-      dbms_free_buffer_pool(session->buffer_pool);
     }
     if (session->table_name) {
       free(session->table_name);
@@ -299,23 +308,39 @@ void dbms_free_dbms_session(dbms_session_t* session) {
   }
 }
 
-void dbms_free_buffer_pool(buffer_pool_t* pool) {
-  if (pool) {
-    hash_table_free(pool->page_table);
-    // Free each page in the buffer pages
-    // They are allocated all together, so just free first one
-    if (pool->buffer_pages[0].page) {
-      free(pool->buffer_pages[0].page);
-    }
-    // Same for tuples/attribute values
-    if (pool->buffer_pages[0].tuples) {
-      if (pool->buffer_pages[0].tuples->attributes) {
-        free(pool->buffer_pages[0].tuples->attributes);
-      }
-      free(pool->buffer_pages[0].tuples);
-    }
-    free(pool);
+void dbms_free_buffer_pool(const system_catalog_t* catalog, buffer_pool_t* pool) {
+  if (!pool) {
+    return;
   }
+
+  hash_table_free(pool->page_table);
+  // Free each page in the buffer pages
+  // They are allocated all together, so just free first one
+  if (pool->buffer_pages[0].page) {
+    free(pool->buffer_pages[0].page);
+  }
+
+  // Same for tuples/attribute values
+  if (pool->buffer_pages[0].tuples) {
+    if (pool->buffer_pages[0].tuples->attributes) {
+      // Also need to free each tuple's attribute string values
+      uint64_t tuples_per_page = dbms_catalog_tuples_per_page(catalog);
+      uint8_t num_attributes = dbms_catalog_num_used(catalog);
+      for (uint32_t i = 0; i < BUFFER_POOL_SIZE; i++) {
+        for (uint64_t j = 0; j < tuples_per_page; j++) {
+          tuple_t* tuple = &pool->buffer_pages[i].tuples[j];
+          for (uint8_t k = 0; k < num_attributes; k++) {
+            if (tuple->attributes[k].type == ATTRIBUTE_TYPE_STRING && tuple->attributes[k].string_value) {
+              free(tuple->attributes[k].string_value);
+            }
+          }
+        }
+      }
+      free(pool->buffer_pages[0].tuples->attributes);
+    }
+    free(pool->buffer_pages[0].tuples);
+  }
+  free(pool);
 }
 
 void dbms_free_system_catalog(system_catalog_t* catalog) {
@@ -406,7 +431,8 @@ buffer_page_t* dbms_get_buffer_page(dbms_session_t* session, uint64_t page_id) {
             tuple->attributes[k].float_value = load_f32(attribute_data);
             break;
           case ATTRIBUTE_TYPE_STRING:
-            tuple->attributes[k].string_value = attribute_data;
+            strncpy(tuple->attributes[k].string_value, attribute_data, record->attribute_size);
+            tuple->attributes[k].string_value[record->attribute_size] = '\0';
             break;
           case ATTRIBUTE_TYPE_BOOL:
             tuple->attributes[k].bool_value = (load_u8(attribute_data) != 0);
@@ -569,6 +595,8 @@ buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session) {
 
   // Check if any pages in buffer pool have free space
   // TODO: Optimize this search?
+  bool to_check[session->page_count];
+  memset(to_check, true, sizeof(to_check));
   for (uint32_t i = 0; i < BUFFER_POOL_SIZE; i++) {
     buffer_page_t* buffer_page = &session->buffer_pool->buffer_pages[i];
     if (!buffer_page->is_free) {
@@ -577,11 +605,25 @@ buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session) {
       if (page->free_space_head < PAGE_SIZE) {
         return buffer_page;
       }
+      to_check[buffer_page->page_id - 1] = false;
     }
   }
 
   // No pages in buffer pool have free space, need to load a new page
-  // TODO: Load actual pages with free space from disk
+  // Load actual pages with free space from disk
+  for (uint64_t page_id = 1; page_id <= session->page_count; page_id++) {
+    if (to_check[page_id - 1]) {
+      buffer_page_t* buffer_page = dbms_get_buffer_page(session, page_id);
+      if (!buffer_page) {
+        fprintf(stderr, "Failed to load page %llu from disk while searching for free space\n", page_id);
+        return NULL;
+      }
+      page_t* page = buffer_page->page;
+      if (page->free_space_head < PAGE_SIZE) {
+        return buffer_page;
+      }
+    }
+  }
 
   // Create a new page at the end of the file
   page_t* new_page = aligned_alloc(PAGE_SIZE, sizeof(page_t));
@@ -755,11 +797,15 @@ static tuple_t* replace_tuple_data(dbms_session_t* session, tuple_t* tuple, buff
         tuple_attr->float_value = attributes[i].float_value;
         store_f32(page_attribute_ptr, attributes[i].float_value);
         break;
-      case ATTRIBUTE_TYPE_STRING:
-        // This should have size effect of also affecting the tuple string value
-        memcpy(page_attribute_ptr, attributes[i].string_value,
-               strnlen(attributes[i].string_value, record->attribute_size));
-        break;
+      case ATTRIBUTE_TYPE_STRING: {
+        size_t copy_size = strnlen(attributes[i].string_value, record->attribute_size);
+        // Rest of page tuple is already zeroed out
+        memcpy(page_attribute_ptr, attributes[i].string_value, copy_size);
+
+        // Also copy to tuple attribute value, ensuring null-termination
+        memcpy(tuple_attr->string_value, attributes[i].string_value, copy_size);
+        tuple_attr->string_value[copy_size] = '\0';
+      } break;
       case ATTRIBUTE_TYPE_BOOL:
         tuple_attr->bool_value = attributes[i].bool_value;
         store_u8(page_attribute_ptr, attributes[i].bool_value ? 1 : 0);

@@ -837,8 +837,7 @@ static void print_tuple_info(tuple_t* tuple, uint8_t num_attributes, system_cata
         printf("%f", tuple->attributes[i].float_value);
         break;
       case ATTRIBUTE_TYPE_STRING:
-        printf("%.*s", (int)dbms_get_catalog_record(catalog, (uint8_t)i)->attribute_size,
-               tuple->attributes[i].string_value);
+        printf("%s", tuple->attributes[i].string_value);
         break;
       case ATTRIBUTE_TYPE_BOOL:
         printf("%s", tuple->attributes[i].bool_value ? "true" : "false");

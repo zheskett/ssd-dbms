@@ -86,8 +86,7 @@ void print_tuple(dbms_session_t* session, tuple_t* tuple) {
           printf("%f\n", attr_value->float_value);
           break;
         case ATTRIBUTE_TYPE_STRING:
-          // Cannot assume null-terminated string
-          printf("%.*s\n", (int)record->attribute_size, attr_value->string_value ? attr_value->string_value : "NULL");
+          printf("%s\n", attr_value->string_value ? attr_value->string_value : "NULL");
           break;
         case ATTRIBUTE_TYPE_BOOL:
           printf("%s\n", attr_value->bool_value ? "true" : "false");
