@@ -157,9 +157,10 @@ void dbms_free_dbms_session(dbms_session_t* session);
 /**
  * @brief Frees the buffer pool structure
  *
+ * @param catalog Pointer to the system catalog (for attribute sizes)
  * @param pool Pointer to the buffer pool to free
  */
-void dbms_free_buffer_pool(buffer_pool_t* pool);
+void dbms_free_buffer_pool(const system_catalog_t* catalog, buffer_pool_t* pool);
 
 /**
  * @brief Frees the system catalog structure
