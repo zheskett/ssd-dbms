@@ -245,9 +245,10 @@ catalog_record_t* dbms_get_catalog_record_by_name(const system_catalog_t* catalo
  *
  * @param catalog Pointer to the system catalog
  * @param page Pointer to the page to initialize
+ * @param page_id ID of the page to initialize
  * @return true on success, false on failure
  */
-bool dbms_init_page(const system_catalog_t* catalog, page_t* page);
+bool dbms_init_page(const system_catalog_t* catalog, page_t* page, uint64_t page_id);
 
 /**
  * @brief Returns the number of used (non-padding) attributes in the catalog

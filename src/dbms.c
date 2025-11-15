@@ -39,7 +39,7 @@ bool dbms_create_table(const char* filename, const system_catalog_t* catalog) {
     return false;
   }
   memset(first_page, 0, sizeof(page_t));
-  if (!dbms_init_page(catalog, first_page)) {
+  if (!dbms_init_page(catalog, first_page, 1)) {
     fprintf(stderr, "Failed to initialize first page\n");
     free(first_page);
     ssdio_close(fd);
@@ -508,14 +508,13 @@ catalog_record_t* dbms_get_catalog_record_by_name(const system_catalog_t* catalo
   return NULL;
 }
 
-bool dbms_init_page(const system_catalog_t* catalog, page_t* page) {
+bool dbms_init_page(const system_catalog_t* catalog, page_t* page, uint64_t page_id) {
   if (!catalog || !page) {
     return false;
   }
 
-  // TODO: Multi page not added yet
-  page->next_page = 0;
-  page->prev_page = 0;
+  page->next_page = page_id + 1;
+  page->prev_page = page_id - 1;
 
   page->free_space_head = 0;
   page->tuples_per_page = dbms_catalog_tuples_per_page(catalog);
@@ -583,12 +582,14 @@ buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session) {
 
   // No pages in buffer pool have free space, need to load a new page
   // TODO: Load actual pages with free space from disk
+
+  // Create a new page at the end of the file
   page_t* new_page = aligned_alloc(PAGE_SIZE, sizeof(page_t));
   if (!new_page) {
     fprintf(stderr, "Failed to create new page in disk\n");
     return NULL;
   }
-  if(!dbms_init_page(session->catalog, new_page)) {
+  if (!dbms_init_page(session->catalog, new_page, session->page_count + 1)) {
     fprintf(stderr, "Failed to load page with free space from disk\n");
     return NULL;
   }
