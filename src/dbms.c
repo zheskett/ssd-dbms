@@ -583,19 +583,19 @@ buffer_page_t* dbms_find_page_with_free_space(dbms_session_t* session) {
 
   // No pages in buffer pool have free space, need to load a new page
   // TODO: Load actual pages with free space from disk
-  buffer_page_t* target_page = dbms_get_buffer_page(session, 1);
-
-  if (!target_page) {
+  page_t* new_page = aligned_alloc(PAGE_SIZE, sizeof(page_t));
+  if (!new_page) {
+    fprintf(stderr, "Failed to create new page in disk\n");
+    return NULL;
+  }
+  if(!dbms_init_page(session->catalog, new_page)) {
     fprintf(stderr, "Failed to load page with free space from disk\n");
     return NULL;
   }
-  page_t* page = target_page->page;
-  if (page->free_space_head >= PAGE_SIZE) {
-    fprintf(stderr, "Loaded page has no free space\n");
-    return NULL;
-  }
+  ssdio_write_page(session->fd, ++session->page_count, new_page);
+  ssdio_flush(session->fd);
 
-  return target_page;
+  return dbms_get_buffer_page(session, session->page_count);
 }
 
 tuple_t* dbms_insert_tuple(dbms_session_t* session, attribute_value_t* attributes) {
