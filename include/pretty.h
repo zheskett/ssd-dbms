@@ -2,6 +2,9 @@
 #define PRETTY_H
 
 #include "dbms.h"
+#include "query.h"
+
+#define QUERY_COLUMN_WIDTH 15
 
 /**
  * @brief Prints the system catalog to stdout
@@ -26,6 +29,13 @@ void print_page(dbms_session_t* session, uint64_t page_id, bool print_nulls);
  * @param tuple Pointer to the tuple to print
  */
 void print_tuple(dbms_session_t* session, tuple_t* tuple);
+
+/**
+ * @brief Prints the results of a query to stdout
+ *
+ * @param result Pointer to the query result to print
+ */
+void print_query_result(query_result_t* result);
 
 /**
  * @brief Converts attribute type to string representation

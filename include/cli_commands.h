@@ -13,8 +13,12 @@
 #define CLI_OPEN_TABLE_COMMAND "open"
 #define CLI_SPLIT_COMMAND "split"
 #define CLI_TIME_COMMAND "time"
+#define CLI_QUERY_COMMAND "query"
+
+#define CLI_QUERY_SELECT_COMMAND "select"
 
 #define MAX_SPLITS 16
+#define MAX_QUERY_SELECT_PROPOSITIONS 32
 
 #define CLI_SUCCESS_RETURN_CODE 1
 #define CLI_FAILURE_RETURN_CODE -1
@@ -128,5 +132,23 @@ int cli_split_command(dbms_manager_t* manager, char* input_line);
  * @return CLI return code
  */
 int cli_time_command(dbms_manager_t* manager, char* input_line);
+
+/**
+ * @brief Executes a query command
+ *
+ * @param manager Pointer to the DBMS manager
+ * @param input_line Input line containing the query parameters
+ * @return CLI return code
+ */
+int cli_query_command(dbms_manager_t* manager, char* input_line);
+
+/**
+ * @brief Executes a select query command
+ *
+ * @param manager Pointer to the DBMS manager
+ * @param input_line Input line containing the select query parameters
+ * @return CLI return code
+ */
+int cli_query_select(dbms_manager_t* manager, char* input_line);
 
 #endif /* CLI_COMMANDS_H */
