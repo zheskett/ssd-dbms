@@ -71,9 +71,9 @@ query_result_t* query_select(dbms_session_t* session, selection_criteria_t* crit
 
   // Iterate through all tuples in the database and apply selection criteria
   uint64_t tuples_per_page = dbms_catalog_tuples_per_page(session->catalog);
-  for (uint64_t page_id = 0; page_id < session->page_count; page_id++) {
+  for (uint64_t page_id = 1; page_id <= session->page_count; page_id++) {
     for (uint64_t tuple_index = 0; tuple_index < tuples_per_page; tuple_index++) {
-      tuple_t* tuple = dbms_get_tuple(session->catalog, (tuple_id_t){.page_id = page_id, .slot_id = tuple_index});
+      tuple_t* tuple = dbms_get_tuple(session, (tuple_id_t){.page_id = page_id, .slot_id = tuple_index});
       // Skip null tuples
       if (!tuple) {
         continue;

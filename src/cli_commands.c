@@ -98,6 +98,8 @@ int cli_exec(dbms_manager_t* manager, char* input) {
     return cli_split_command(manager, input_line);
   } else if (strcmp(command, CLI_TIME_COMMAND) == 0) {
     return cli_time_command(manager, input_line);
+  } else if (strcmp(command, CLI_QUERY_COMMAND) == 0) {
+    return cli_query_command(manager, input_line);
   }
 
   // For other commands, the first token is the table name
@@ -856,12 +858,30 @@ int cli_query_select(dbms_manager_t* manager, char* input_line) {
   }
 
   // The final token should be the table name
-  char* table_name = propositions[--proposition_count];
+  char* table_name_malloc = strdup(propositions[--proposition_count]);
+  if (!table_name_malloc) {
+    fprintf(stderr, "Memory allocation failed for table name\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+  char* table_name = table_name_malloc;
+
+  // Remove leading/trailing whitespace
+  while (*table_name == ' ' || *table_name == '\t' || *table_name == '\n') {
+    table_name++;
+  }
+  char* end = table_name + strlen(table_name) - 1;
+  while (end > table_name && (*end == ' ' || *end == '\t' || *end == '\n')) {
+    *end = '\0';
+    end--;
+  }
+
   dbms_session_t* session = get_session_by_name(manager, table_name);
   if (!session) {
     fprintf(stderr, "Table '%s' not found in DBMS manager\n", table_name);
+    free(table_name_malloc);
     return CLI_FAILURE_RETURN_CODE;
   }
+  free(table_name_malloc);
   system_catalog_t* catalog = session->catalog;
 
   selection_criteria_t criteria = {0};
@@ -957,6 +977,16 @@ static void print_tuple_info(tuple_t* tuple, uint8_t num_attributes, system_cata
 
 static bool generate_proposition(char* proposition_str, proposition_t* proposition, const system_catalog_t* catalog) {
   // Example proposition: "attribute_name operator value"
+  // Remove leading/trailing whitespace
+  while (*proposition_str == ' ' || *proposition_str == '\t' || *proposition_str == '\n') {
+    proposition_str++;
+  }
+  char* end = proposition_str + strlen(proposition_str) - 1;
+  while (end > proposition_str && (*end == ' ' || *end == '\t' || *end == '\n')) {
+    *end = '\0';
+    end--;
+  }
+
   char* save_ptr = NULL;
   char* attribute_name = strtok_r(proposition_str, " \t\n", &save_ptr);
   char* operator_str = strtok_r(NULL, " \t\n", &save_ptr);

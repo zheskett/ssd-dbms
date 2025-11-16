@@ -108,6 +108,7 @@ void print_query_result(query_result_t* result) {
   }
 
   // Should print like this:
+  // |---------------|---------------|---------------|
   // | Column1       | Column2       | Column3       |
   // |---------------|---------------|---------------|
   // | Value1        | Value2        | Value3        |
@@ -142,12 +143,6 @@ void print_query_result(query_result_t* result) {
     }
   }
 
-  // Print header
-  for (size_t j = 0; j < result->column_count; j++) {
-    printf("| %-*s ", (int)column_widths[j], result->column_names[j]);
-  }
-  printf("|\n");
-
   // Calculate total width for separator line
   size_t total_width = 0;
   for (size_t j = 0; j < result->column_count; j++) {
@@ -173,6 +168,14 @@ void print_query_result(query_result_t* result) {
   }
   separator_line[total_width - 1] = '|';
   separator_line[total_width] = '\0';
+
+  printf("%s\n", separator_line);
+
+  // Print header
+  for (size_t j = 0; j < result->column_count; j++) {
+    printf("| %-*s ", (int)column_widths[j], result->column_names[j]);
+  }
+  printf("|\n");
 
   printf("%s\n", separator_line);
 
