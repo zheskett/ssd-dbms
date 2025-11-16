@@ -6,11 +6,14 @@
 #include <time.h>
 
 #include "pretty.h"
+#include "query.h"
 
 static bool populate_attribute_values_from_tokens(system_catalog_t* catalog, char** tokens, uint8_t num_attributes,
                                                   attribute_value_t* attributes);
 
 static void print_tuple_info(tuple_t* tuple, uint8_t num_attributes, system_catalog_t* catalog);
+
+static bool generate_proposition(char* proposition_str, proposition_t* proposition, const system_catalog_t* catalog);
 
 static int cli_table_exec(dbms_session_t* session, char* input_line) {
   char* save_ptr = NULL;
@@ -95,6 +98,8 @@ int cli_exec(dbms_manager_t* manager, char* input) {
     return cli_split_command(manager, input_line);
   } else if (strcmp(command, CLI_TIME_COMMAND) == 0) {
     return cli_time_command(manager, input_line);
+  } else if (strcmp(command, CLI_QUERY_COMMAND) == 0) {
+    return cli_query_command(manager, input_line);
   }
 
   // For other commands, the first token is the table name
@@ -675,12 +680,13 @@ int cli_split_command(dbms_manager_t* manager, char* input_line) {
       end--;
     }
 
-    // Split command cannot be another split, create, open, or time
+    // Split command cannot be another split, create, open, time, or query command
     if (strncmp(command_line, CLI_SPLIT_COMMAND, strlen(CLI_SPLIT_COMMAND)) == 0 ||
         strncmp(command_line, CLI_CREATE_TABLE_COMMAND, strlen(CLI_CREATE_TABLE_COMMAND)) == 0 ||
         strncmp(command_line, CLI_OPEN_TABLE_COMMAND, strlen(CLI_OPEN_TABLE_COMMAND)) == 0 ||
-        strncmp(command_line, CLI_TIME_COMMAND, strlen(CLI_TIME_COMMAND)) == 0) {
-      fprintf(stderr, "Nested split, create, open, or time commands are not allowed\n");
+        strncmp(command_line, CLI_TIME_COMMAND, strlen(CLI_TIME_COMMAND)) == 0 ||
+        strncmp(command_line, CLI_QUERY_COMMAND, strlen(CLI_QUERY_COMMAND)) == 0) {
+      fprintf(stderr, "Nested split, create, open, time, and query commands are not allowed\n");
       return CLI_FAILURE_RETURN_CODE;
     }
 
@@ -795,6 +801,128 @@ int cli_time_command(dbms_manager_t* manager, char* input_line) {
   return CLI_SUCCESS_RETURN_CODE;
 }
 
+int cli_query_command(dbms_manager_t* manager, char* input_line) {
+  if (!manager) {
+    fprintf(stderr, "Invalid manager\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+  if (!input_line) {
+    fprintf(stderr, "No input line provided for query command\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  // Check for query command
+  char* save_ptr = NULL;
+  char* command = strtok_r(input_line, " \t\n", &save_ptr);
+  if (!command) {
+    fprintf(stderr, "No command provided for query\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  if (strcmp(command, CLI_QUERY_SELECT_COMMAND) == 0) {
+    return cli_query_select(manager, save_ptr);
+  } else {
+    fprintf(stderr, "Unknown query command: %s\n", command);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+}
+
+int cli_query_select(dbms_manager_t* manager, char* input_line) {
+  if (!manager) {
+    fprintf(stderr, "Invalid manager\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+  if (!input_line) {
+    fprintf(stderr, "No input line provided for select command\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  // Split propositions by ";"
+  char* save_ptr = NULL;
+  char* propositions[MAX_QUERY_SELECT_PROPOSITIONS];
+  int proposition_count = 0;
+
+  char* token = strtok_r(input_line, ";", &save_ptr);
+  while (token != NULL && proposition_count < MAX_QUERY_SELECT_PROPOSITIONS) {
+    propositions[proposition_count++] = token;
+    token = strtok_r(NULL, ";", &save_ptr);
+  }
+
+  if (proposition_count == 0) {
+    fprintf(stderr, "No propositions provided for select command\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+  if (token != NULL) {
+    fprintf(stderr, "Exceeded maximum number of propositions (%d)\n", MAX_QUERY_SELECT_PROPOSITIONS);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  // The final token should be the table name
+  char* table_name_malloc = strdup(propositions[--proposition_count]);
+  if (!table_name_malloc) {
+    fprintf(stderr, "Memory allocation failed for table name\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+  char* table_name = table_name_malloc;
+
+  // Remove leading/trailing whitespace
+  while (*table_name == ' ' || *table_name == '\t' || *table_name == '\n') {
+    table_name++;
+  }
+  char* end = table_name + strlen(table_name) - 1;
+  while (end > table_name && (*end == ' ' || *end == '\t' || *end == '\n')) {
+    *end = '\0';
+    end--;
+  }
+
+  dbms_session_t* session = get_session_by_name(manager, table_name);
+  if (!session) {
+    fprintf(stderr, "Table '%s' not found in DBMS manager\n", table_name);
+    free(table_name_malloc);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+  free(table_name_malloc);
+  system_catalog_t* catalog = session->catalog;
+
+  selection_criteria_t criteria = {0};
+  criteria.proposition_count = proposition_count;
+  criteria.propositions = calloc(proposition_count, sizeof(proposition_t));
+  if (!criteria.propositions) {
+    fprintf(stderr, "Memory allocation failed for selection criteria propositions\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  for (int i = 0; i < proposition_count; i++) {
+    if (!generate_proposition(propositions[i], &criteria.propositions[i], catalog)) {
+      for (int j = 0; j < i; j++) {
+        if (criteria.propositions[j].value.type == ATTRIBUTE_TYPE_STRING &&
+            criteria.propositions[j].value.string_value) {
+          free(criteria.propositions[j].value.string_value);
+        }
+      }
+      free(criteria.propositions);
+      return CLI_FAILURE_RETURN_CODE;
+    }
+  }
+
+  query_result_t* result = query_select(session, &criteria);
+
+  for (int i = 0; i < proposition_count; i++) {
+    if (criteria.propositions[i].value.type == ATTRIBUTE_TYPE_STRING && criteria.propositions[i].value.string_value) {
+      free(criteria.propositions[i].value.string_value);
+    }
+  }
+  free(criteria.propositions);
+
+  if (!result) {
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  print_query_result(result);
+  query_free_query_result(result);
+  return CLI_SUCCESS_RETURN_CODE;
+}
+
 static bool populate_attribute_values_from_tokens(system_catalog_t* catalog, char** tokens, uint8_t num_attributes,
                                                   attribute_value_t* attributes) {
   for (int i = 0; i < num_attributes; i++) {
@@ -845,4 +973,79 @@ static void print_tuple_info(tuple_t* tuple, uint8_t num_attributes, system_cata
     }
   }
   printf(")");
+}
+
+static bool generate_proposition(char* proposition_str, proposition_t* proposition, const system_catalog_t* catalog) {
+  // Example proposition: "attribute_name operator value"
+  // Remove leading/trailing whitespace
+  while (*proposition_str == ' ' || *proposition_str == '\t' || *proposition_str == '\n') {
+    proposition_str++;
+  }
+  char* end = proposition_str + strlen(proposition_str) - 1;
+  while (end > proposition_str && (*end == ' ' || *end == '\t' || *end == '\n')) {
+    *end = '\0';
+    end--;
+  }
+
+  char* save_ptr = NULL;
+  char* attribute_name = strtok_r(proposition_str, " \t\n", &save_ptr);
+  char* operator_str = strtok_r(NULL, " \t\n", &save_ptr);
+  char* value_str = strtok_r(NULL, " \t\n", &save_ptr);
+  if (!attribute_name || !operator_str || !value_str) {
+    fprintf(stderr, "Invalid proposition format: %s\n", proposition_str);
+    return false;
+  }
+
+  catalog_record_t* record = dbms_get_catalog_record_by_name(catalog, attribute_name);
+  if (!record) {
+    fprintf(stderr, "Attribute '%s' not found in catalog\n", attribute_name);
+    return false;
+  }
+
+  proposition->attribute_index = record->attribute_order;
+
+  // Determine operator
+  if (strcmp(operator_str, "=") == 0) {
+    proposition->operator = OPERATOR_EQUAL;
+  } else if (strcmp(operator_str, "!=") == 0) {
+    proposition->operator = OPERATOR_NOT_EQUAL;
+  } else if (strcmp(operator_str, "<") == 0) {
+    proposition->operator = OPERATOR_LESS_THAN;
+  } else if (strcmp(operator_str, "<=") == 0) {
+    proposition->operator = OPERATOR_LESS_EQUAL;
+  } else if (strcmp(operator_str, ">") == 0) {
+    proposition->operator = OPERATOR_GREATER_THAN;
+  } else if (strcmp(operator_str, ">=") == 0) {
+    proposition->operator = OPERATOR_GREATER_EQUAL;
+  } else {
+    fprintf(stderr, "Unknown operator in proposition: %s\n", operator_str);
+    return false;
+  }
+
+  // Save value based on attribute type
+  switch (record->attribute_type) {
+    case ATTRIBUTE_TYPE_INT:
+      proposition->value.int_value = atoi(value_str);
+      break;
+    case ATTRIBUTE_TYPE_FLOAT:
+      proposition->value.float_value = (float)atof(value_str);
+      break;
+    case ATTRIBUTE_TYPE_STRING:
+      proposition->value.string_value = strdup(value_str);
+      if (!proposition->value.string_value) {
+        fprintf(stderr, "Memory allocation failed for string value in proposition\n");
+        return false;
+      }
+      break;
+    case ATTRIBUTE_TYPE_BOOL:
+      proposition->value.bool_value = (bool)(strcmp(value_str, "true") == 0 || strcmp(value_str, "1") == 0);
+      break;
+    default:
+      fprintf(stderr, "Unknown attribute type: %u\n", record->attribute_type);
+      return false;
+  }
+
+  proposition->value.type = record->attribute_type;
+
+  return true;
 }
