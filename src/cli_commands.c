@@ -788,14 +788,16 @@ int cli_time_command(dbms_manager_t* manager, char* input_line) {
     return CLI_FAILURE_RETURN_CODE;
   }
 
-  clock_t start_time = clock();
+  struct timespec start_time, end_time = {0};
+  clock_gettime(CLOCK_MONOTONIC, &start_time);
   int result = cli_exec(manager, input_line);
-  clock_t end_time = clock();
+  clock_gettime(CLOCK_MONOTONIC, &end_time);
+
   if (result != CLI_SUCCESS_RETURN_CODE) {
     return result;
   }
 
-  double elapsed_time = (double)(end_time - start_time) / (double)CLOCKS_PER_SEC;
+  double elapsed_time = (end_time.tv_sec - start_time.tv_sec) + (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
   printf("Command executed in %.5f seconds\n", elapsed_time);
 
   return CLI_SUCCESS_RETURN_CODE;
