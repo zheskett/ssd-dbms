@@ -194,9 +194,10 @@ buffer_page_t* dbms_get_buffer_page(dbms_session_t* session, uint64_t page_id);
  * If a page needs to be evicted, it is written back to disk if dirty.
  *
  * @param session Pointer to the DBMS session
+ * @param target_index Pointer to store the index of the evicted page
  * @return Pointer to the evicted buffer page, or NULL on failure
  */
-buffer_page_t* dbms_run_buffer_pool_policy(dbms_session_t* session);
+buffer_page_t* dbms_run_buffer_pool_policy(dbms_session_t* session, uint64_t* target_index);
 
 /**
  * @brief Flushes a single buffer page to disk if it is dirty

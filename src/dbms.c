@@ -377,7 +377,8 @@ buffer_page_t* dbms_get_buffer_page(dbms_session_t* session, uint64_t page_id) {
   }
 
   // Page not found in buffer pool, get a free page or evict one
-  buffer_page_t* target_page = dbms_run_buffer_pool_policy(session);
+  uint64_t target_index = 0;
+  buffer_page_t* target_page = dbms_run_buffer_pool_policy(session, &target_index);
   if (!target_page) {
     fprintf(stderr, "Failed to find or evict a buffer page for page ID %llu\n", page_id);
     return NULL;
@@ -390,7 +391,6 @@ buffer_page_t* dbms_get_buffer_page(dbms_session_t* session, uint64_t page_id) {
   }
 
   // Insert into page table
-  uint64_t target_index = (target_page - session->buffer_pool->buffer_pages) / sizeof(buffer_page_t);
   if (!hash_table_insert(session->buffer_pool->page_table, page_id, target_index)) {
     fprintf(stderr, "Failed to insert page %llu into buffer pool page table\n", page_id);
     return NULL;
@@ -447,7 +447,7 @@ buffer_page_t* dbms_get_buffer_page(dbms_session_t* session, uint64_t page_id) {
   return target_page;
 }
 
-buffer_page_t* dbms_run_buffer_pool_policy(dbms_session_t* session) {
+buffer_page_t* dbms_run_buffer_pool_policy(dbms_session_t* session, uint64_t* target_index) {
   if (!session || !session->buffer_pool) {
     return NULL;
   }
@@ -455,9 +455,10 @@ buffer_page_t* dbms_run_buffer_pool_policy(dbms_session_t* session) {
   // TODO: Optimize this search?
   if (session->buffer_pool->page_count < BUFFER_POOL_SIZE) {
     // There is still free space in the buffer pool
-    for (uint32_t i = 0; i < BUFFER_POOL_SIZE; i++) {
+    for (uint64_t i = 0; i < BUFFER_POOL_SIZE; i++) {
       buffer_page_t* buffer_page = &session->buffer_pool->buffer_pages[i];
       if (buffer_page->is_free) {
+        *target_index = i;
         return buffer_page;
       }
     }
