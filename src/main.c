@@ -1,5 +1,9 @@
 #include "main.h"
 
+#include "cli_commands.h"
+#include "dbms.h"
+#include "linenoise.h"
+
 int main(int argc, char* argv[]) {
   // Read existing database
   // Make dbms manager
