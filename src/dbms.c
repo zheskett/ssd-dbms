@@ -447,14 +447,26 @@ buffer_page_t* dbms_get_buffer_page(dbms_session_t* session, uint64_t page_id) {
   return target_page;
 }
 
+// Comparator for sorting buffer pages by last_updated (LRU)
+static int compare_buffer_pages(const void* a, const void* b) {
+  buffer_page_t* page_a = *(buffer_page_t**)a;
+  buffer_page_t* page_b = *(buffer_page_t**)b;
+
+  if (page_a->last_updated < page_b->last_updated) {
+    return -1;
+  } else if (page_a->last_updated > page_b->last_updated) {
+    return 1;
+  }
+  return 0;
+}
+
 buffer_page_t* dbms_run_buffer_pool_policy(dbms_session_t* session, uint64_t* target_index) {
   if (!session || !session->buffer_pool) {
     return NULL;
   }
 
-  // TODO: Optimize this search?
+  // Check for free pages first
   if (session->buffer_pool->page_count < BUFFER_POOL_SIZE) {
-    // There is still free space in the buffer pool
     for (uint64_t i = 0; i < BUFFER_POOL_SIZE; i++) {
       buffer_page_t* buffer_page = &session->buffer_pool->buffer_pages[i];
       if (buffer_page->is_free) {
@@ -464,8 +476,46 @@ buffer_page_t* dbms_run_buffer_pool_policy(dbms_session_t* session, uint64_t* ta
     }
   }
 
-  // TODO: Eviction policy
-  return NULL;
+  // Collect pointers to all buffer pages
+  buffer_page_t* pages[BUFFER_POOL_SIZE];
+  for (size_t i = 0; i < BUFFER_POOL_SIZE; i++) {
+    pages[i] = &session->buffer_pool->buffer_pages[i];
+  }
+
+  // Sort pages by last_updated (LRU first)
+  qsort(pages, BUFFER_POOL_SIZE, sizeof(buffer_page_t*), compare_buffer_pages);
+
+  // CFLRU Policy:
+  // 1. Divide the LRU list into two regions: Clean-First Window (older) and Working Region (newer)
+  // 2. Search for a clean page in the Clean-First Window
+  // 3. If found, evict it. If not, evict the LRU page (pages[0])
+
+  size_t window_size = BUFFER_POOL_SIZE / 2;
+  if (window_size == 0 && BUFFER_POOL_SIZE > 0) {
+    window_size = 1;
+  }
+
+  buffer_page_t* victim = NULL;
+
+  // Search for clean page in the Clean-First window
+  for (size_t i = 0; i < window_size; i++) {
+    if (!pages[i]->is_dirty) {
+      victim = pages[i];
+      break;
+    }
+  }
+
+  // Fallback: If no clean page in window, evict the LRU page
+  if (!victim) {
+    victim = pages[0];
+  }
+
+  // Flush if dirty
+  dbms_flush_buffer_page(session, victim, true);
+
+  // Calculate the original index
+  *target_index = victim - session->buffer_pool->buffer_pages;
+  return victim;
 }
 
 void dbms_flush_buffer_page(dbms_session_t* session, buffer_page_t* buffer_page, bool run_flush) {

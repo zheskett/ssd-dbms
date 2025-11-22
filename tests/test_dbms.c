@@ -1,6 +1,7 @@
 #include <string.h>
 
 #include "dbms.h"
+#include "ssdio.h"
 #include "unity.h"
 
 #define TEST_CATALOG_SIZE 6
@@ -169,6 +170,83 @@ static void test_dbms_fill_and_empty_page() {
   }
 }
 
+static void test_cflru_eviction() {
+  // 1. Manually create 5 pages on disk to avoid filling buffer with find_page_with_free_space
+  page_t temp_page;
+  memset(&temp_page, 0, sizeof(page_t));
+  
+  for (uint64_t i = 1; i <= 5; i++) {
+    dbms_init_page(test_dbms_session->catalog, &temp_page, i);
+    ssdio_write_page(test_dbms_session->fd, i, &temp_page);
+  }
+  test_dbms_session->page_count = 5;
+  ssdio_flush(test_dbms_session->fd);
+
+  // 2. Load Page 1 and make it dirty
+  buffer_page_t* p1 = dbms_get_buffer_page(test_dbms_session, 1);
+  TEST_ASSERT_NOT_NULL(p1);
+  
+  // Insert a tuple to make it dirty and update timestamp
+  attribute_value_t attrs[TEST_CATALOG_SIZE - 1] = {
+      {ATTRIBUTE_TYPE_INT, .int_value = 100},
+      {ATTRIBUTE_TYPE_STRING, .string_value = "Dirty"},
+      {ATTRIBUTE_TYPE_FLOAT, .float_value = 1.0f},
+      {ATTRIBUTE_TYPE_STRING, .string_value = "Dept"},
+      {ATTRIBUTE_TYPE_BOOL, .bool_value = true}
+  };
+  // We can manually update it to ensure we control the dirty state and timestamp order
+  // But insert_tuple is more natural. Note that insert_tuple calls find_page_with_free_space,
+  // which might scan buffer. Since only P1 is in buffer, it finds P1.
+  tuple_t* t = dbms_insert_tuple(test_dbms_session, attrs);
+  TEST_ASSERT_NOT_NULL(t);
+  TEST_ASSERT_EQUAL_UINT64(1, t->id.page_id);
+  TEST_ASSERT_TRUE(p1->is_dirty);
+
+  // 3. Load Pages 2, 3, 4 (Read-only, so they stay clean)
+  // Access them in order so their timestamps are: P1 < P2 < P3 < P4
+  buffer_page_t* p2 = dbms_get_buffer_page(test_dbms_session, 2);
+  TEST_ASSERT_NOT_NULL(p2);
+  TEST_ASSERT_FALSE(p2->is_dirty);
+
+  buffer_page_t* p3 = dbms_get_buffer_page(test_dbms_session, 3);
+  TEST_ASSERT_NOT_NULL(p3);
+  TEST_ASSERT_FALSE(p3->is_dirty);
+
+  buffer_page_t* p4 = dbms_get_buffer_page(test_dbms_session, 4);
+  TEST_ASSERT_NOT_NULL(p4);
+  TEST_ASSERT_FALSE(p4->is_dirty);
+
+  // Current Buffer State (LRU -> MRU):
+  // P1 (Dirty), P2 (Clean), P3 (Clean), P4 (Clean)
+  // Buffer Size = 4. Window Size = 2.
+  // Window: [P1, P2]
+  // CFLRU Logic:
+  // - Check P1: Dirty -> Skip
+  // - Check P2: Clean -> Evict P2
+  
+  // 4. Request Page 5, forcing eviction
+  buffer_page_t* p5 = dbms_get_buffer_page(test_dbms_session, 5);
+  TEST_ASSERT_NOT_NULL(p5);
+  TEST_ASSERT_EQUAL_UINT64(5, p5->page_id);
+
+  // 5. Verify Eviction Results
+  // Check internal hash table to see which pages are present
+  uint64_t index_out;
+  
+  // P1 should still be present (it was dirty, so skipped in window)
+  TEST_ASSERT_TRUE(hash_table_get(test_dbms_session->buffer_pool->page_table, 1, &index_out));
+  
+  // P2 should be evicted (it was the first clean page in window)
+  TEST_ASSERT_FALSE(hash_table_get(test_dbms_session->buffer_pool->page_table, 2, &index_out));
+  
+  // P3, P4 should be present
+  TEST_ASSERT_TRUE(hash_table_get(test_dbms_session->buffer_pool->page_table, 3, &index_out));
+  TEST_ASSERT_TRUE(hash_table_get(test_dbms_session->buffer_pool->page_table, 4, &index_out));
+  
+  // P5 should be present
+  TEST_ASSERT_TRUE(hash_table_get(test_dbms_session->buffer_pool->page_table, 5, &index_out));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_page_size);
@@ -178,6 +256,7 @@ int main() {
   RUN_TEST(test_dbms_catalog_num_used);
   RUN_TEST(test_dbms_insert_tuple);
   RUN_TEST(test_dbms_fill_and_empty_page);
+  RUN_TEST(test_cflru_eviction);
 
   return UNITY_END();
 }
