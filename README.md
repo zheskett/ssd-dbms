@@ -47,14 +47,14 @@ ctest --output-on-failure
 | `<table_name> print page <page_id> [print_nulls]` | Prints the contents of the specified page number in the database file. (page_id starts at 1). `print_nulls` can be true or false (default is false) to indicate whether to print null values. |
 | `<table_name> print tuple <page_id> <slot_id>` | Prints the specified tuple from with the give tuple ID. (page_id starts at 1, slot_id starts at 0) |
 | `<table_name> insert <attribute1, attribute2, ...>` | Inserts a new record into the database. The values should be provided in the order of the schema defined during creation. |
-| `<table_name> update <page_id> <slot_id> <attribute1, attribute2, ...>` | Updates the specified tuple in the database with new attribute values. (page_id starts at 1, slot_id starts at 0) |
-| `<table_name> delete <page_id> <slot_id>` | Deletes the specified tuple from the database. (page_id starts at 1, slot_id starts at 0) |
+| `<table_name> update <proposition1>; [<proposition2>; ...] \| <attribute1, attribute2, ...>` | Updates the specified tuple in the database with new attribute values. |
+| `<table_name> delete <proposition1>; [<proposition2>; ...]` | Deletes the specified tuple from the database.  |
 | `<table_name> fill <num_records> <start_number>` | Fills the database with the specified number of records. The records will have sequential values starting from `start_number`. |
 | `<table_name> evict all` | Evicts the entire table from the buffer pool, writing back any modified pages to disk. |
 | `<table_name> evict page <page_id>` | Evicts the specified page from the buffer pool, writing it back to disk if it has been modified. (page_id starts at 1) |
 | `exit` | Exits the CLI. |
 
-### Query Commands
+### Query Commands and Propositions
 
 The `query` command allows you to execute queries on the database. The syntax for the query command is as follows:
 
@@ -66,7 +66,11 @@ Where `<query_command>` is of the form:
 
 `select <proposition1>; [<proposition2>; ...] <table_name>`
 
-Selects records from the database that satisfy the given propositions. Each proposition should be in the format:
+Selects records from the database that satisfy the given propositions.
+
+#### Propositions
+
+Each proposition should be in the format:
 
 `<attribute_name> <operator> <value>`
 
