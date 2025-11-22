@@ -45,4 +45,23 @@ void query_free_query_result(query_result_t* result);
  */
 query_result_t* query_select(dbms_session_t* session, selection_criteria_t* criteria);
 
+/**
+ * @brief Executes a DELETE query on the DBMS session with the given selection criteria
+ *
+ * @param session Pointer to the DBMS session
+ * @param criteria Pointer to the selection criteria
+ * @return Number of tuples deleted (-1 on failure)
+ */
+int query_delete(dbms_session_t* session, selection_criteria_t* criteria);
+
+/**
+ * @brief Executes an UPDATE query on the DBMS session with the given selection criteria
+ *
+ * @param session Pointer to the DBMS session
+ * @param criteria Pointer to the selection criteria
+ * @param attributes Pointer to the attribute values to update
+ * @return Number of tuples updated (-1 on failure)
+ */
+int query_update(dbms_session_t* session, selection_criteria_t* criteria, attribute_value_t* attributes);
+
 #endif  // QUERY_H

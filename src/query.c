@@ -118,6 +118,90 @@ query_result_t* query_select(dbms_session_t* session, selection_criteria_t* crit
   return result;
 }
 
+int query_delete(dbms_session_t* session, selection_criteria_t* criteria) {
+  if (!session || !criteria) {
+    return -1;
+  }
+
+  // Iterate through all tuples in the database and apply selection criteria
+  int num_deletions = 0;
+
+  uint64_t tuples_per_page = dbms_catalog_tuples_per_page(session->catalog);
+  for (uint64_t page_id = 1; page_id <= session->page_count; page_id++) {
+    for (uint64_t tuple_index = 0; tuple_index < tuples_per_page; tuple_index++) {
+      tuple_t* tuple = dbms_get_tuple(session, (tuple_id_t){.page_id = page_id, .slot_id = tuple_index});
+      // Skip null tuples
+      if (!tuple) {
+        continue;
+      }
+
+      // Evaluate selection criteria
+      bool matches = true;
+      for (size_t proposition_index = 0; proposition_index < criteria->proposition_count; proposition_index++) {
+        proposition_t* proposition = &criteria->propositions[proposition_index];
+        attribute_value_t* attribute = &tuple->attributes[proposition->attribute_index];
+        if (!evaluate_proposition(attribute, proposition)) {
+          matches = false;
+          break;
+        }
+      }
+
+      if (matches) {
+        // Delete tuple from DBMS
+        if (!dbms_delete_tuple(session, (tuple_id_t){.page_id = page_id, .slot_id = tuple_index})) {
+          fprintf(stderr, "Failed to delete tuple (%llu, %llu)\n", page_id, tuple_index);
+          return -1;
+        }
+        num_deletions++;
+      }
+    }
+  }
+
+  return num_deletions;
+}
+
+int query_update(dbms_session_t* session, selection_criteria_t* criteria, attribute_value_t* attributes) {
+  if (!session || !criteria || !attributes) {
+    return -1;
+  }
+
+  // Iterate through all tuples in the database and apply selection criteria
+  int num_updates = 0;
+
+  uint64_t tuples_per_page = dbms_catalog_tuples_per_page(session->catalog);
+  for (uint64_t page_id = 1; page_id <= session->page_count; page_id++) {
+    for (uint64_t tuple_index = 0; tuple_index < tuples_per_page; tuple_index++) {
+      tuple_t* tuple = dbms_get_tuple(session, (tuple_id_t){.page_id = page_id, .slot_id = tuple_index});
+      // Skip null tuples
+      if (!tuple) {
+        continue;
+      }
+
+      // Evaluate selection criteria
+      bool matches = true;
+      for (size_t proposition_index = 0; proposition_index < criteria->proposition_count; proposition_index++) {
+        proposition_t* proposition = &criteria->propositions[proposition_index];
+        attribute_value_t* attribute = &tuple->attributes[proposition->attribute_index];
+        if (!evaluate_proposition(attribute, proposition)) {
+          matches = false;
+          break;
+        }
+      }
+
+      if (matches) {
+        // Update tuple in DBMS
+        if (!dbms_update_tuple(session, (tuple_id_t){.page_id = page_id, .slot_id = tuple_index}, attributes)) {
+          fprintf(stderr, "Failed to update tuple (%llu, %llu)\n", page_id, tuple_index);
+          return -1;
+        }
+        num_updates++;
+      }
+    }
+  }
+
+  return num_updates;
+}
+
 static bool evaluate_proposition(const attribute_value_t* attribute, const proposition_t* proposition) {
   if (!attribute || !proposition) {
     return false;

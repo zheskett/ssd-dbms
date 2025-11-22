@@ -15,6 +15,9 @@ static void print_tuple_info(tuple_t* tuple, uint8_t num_attributes, system_cata
 
 static bool generate_proposition(char* proposition_str, proposition_t* proposition, const system_catalog_t* catalog);
 
+static int parse_selection_criteria(dbms_manager_t* manager, char* input_line, selection_criteria_t* criteria,
+                                    dbms_session_t** out_session);
+
 static int cli_table_exec(dbms_session_t* session, char* input_line) {
   char* save_ptr = NULL;
   char* command = strtok_r(input_line, " \t\n", &save_ptr);
@@ -277,30 +280,28 @@ int cli_delete_command(dbms_session_t* session, char* input_line) {
     return CLI_FAILURE_RETURN_CODE;
   }
 
-  // Tokenize input line
-  char* save_ptr = NULL;
-  char* tokens[2];
-  int token_count = 0;
-  char* token = strtok_r(input_line, " \t\n", &save_ptr);
-  while (token && token_count < 2) {
-    tokens[token_count++] = token;
-    token = strtok_r(NULL, " \t\n", &save_ptr);
-  }
-  if (token_count < 2) {
-    fprintf(stderr, "Usage: delete <page_number> <slot_number>\n");
+  selection_criteria_t criteria = {0};
+
+  if (parse_selection_criteria(NULL, input_line, &criteria, &session) != CLI_SUCCESS_RETURN_CODE) {
     return CLI_FAILURE_RETURN_CODE;
   }
 
-  uint64_t page_id = strtoull(tokens[0], NULL, 10);
-  uint64_t slot_id = strtoull(tokens[1], NULL, 10);
-  tuple_id_t tuple_id = {page_id, slot_id};
+  int num_deletions = query_delete(session, &criteria);
 
-  if (!dbms_delete_tuple(session, tuple_id)) {
-    fprintf(stderr, "Failed to delete tuple (%llu, %llu)\n", page_id, slot_id);
+  for (int i = 0; i < criteria.proposition_count; i++) {
+    if (criteria.propositions[i].value.type == ATTRIBUTE_TYPE_STRING && criteria.propositions[i].value.string_value) {
+      // Append row to result
+      free(criteria.propositions[i].value.string_value);
+    }
+  }
+  free(criteria.propositions);
+
+  if (num_deletions == -1) {
+    fprintf(stderr, "Failed to delete tuples\n");
     return CLI_FAILURE_RETURN_CODE;
   }
 
-  printf("Tuple (%llu, %llu) deleted successfully\n", page_id, slot_id);
+  printf("%d tuple%s deleted successfully\n", num_deletions, num_deletions == 1 ? "" : "s");
   return CLI_SUCCESS_RETURN_CODE;
 }
 
@@ -312,27 +313,40 @@ int cli_update_command(dbms_session_t* session, char* input_line) {
 
   // Tokenize input line
   char* save_ptr = NULL;
-  char* tokens[258];
+  char* token = strtok_r(input_line, "|", &save_ptr);
+  char* tokens[2];
   int token_count = 0;
-  char* token = strtok_r(input_line, " \t\n", &save_ptr);
-  while (token && token_count < 258) {
+  while (token && token_count < 2) {
     tokens[token_count++] = token;
-    token = strtok_r(NULL, " \t\n", &save_ptr);
+    token = strtok_r(NULL, "|", &save_ptr);
   }
 
-  if (token_count < 3) {
-    fprintf(stderr, "Usage: update <page_number> <slot_number> <attribute1, attribute2, ...>\n");
+  if (token_count != 2) {
+    fprintf(stderr, "Usage: update <proposition1>;[proposition2;...] | <attribute1, attribute2, ...>\n");
     return CLI_FAILURE_RETURN_CODE;
   }
 
-  uint64_t page_id = strtoull(tokens[0], NULL, 10);
-  uint64_t slot_id = strtoull(tokens[1], NULL, 10);
-  tuple_id_t tuple_id = {page_id, slot_id};
+  // Remove leading/trailing whitespace
+  char* end = tokens[0] + strlen(tokens[0]) - 1;
+  while (end > tokens[0] && (*end == ' ' || *end == '\t' || *end == '\n')) {
+    *end = '\0';
+    end--;
+  }
+  while (*tokens[1] == ' ' || *tokens[1] == '\t' || *tokens[1] == '\n') {
+    tokens[1]++;
+  }
 
   // Convert tokens to attribute values
+  save_ptr = NULL;
+  char* attribute_tokens[256];
+  int attribute_token_count = 0;
+  token = strtok_r(tokens[1], ",", &save_ptr);
+  while (token && token_count < 256) {
+    attribute_tokens[attribute_token_count++] = token;
+    token = strtok_r(NULL, ",", &save_ptr);
+  }
+
   uint8_t num_attributes = dbms_catalog_num_used(session->catalog);
-  int attribute_token_count = token_count - 2;
-  char** attribute_tokens = &tokens[2];
   if (attribute_token_count != num_attributes) {
     fprintf(stderr, "Attribute count mismatch: expected %u, got %d\n", num_attributes, attribute_token_count);
     return CLI_FAILURE_RETURN_CODE;
@@ -343,15 +357,24 @@ int cli_update_command(dbms_session_t* session, char* input_line) {
     return CLI_FAILURE_RETURN_CODE;
   }
 
-  tuple_t* updated_tuple = dbms_update_tuple(session, tuple_id, attributes);
-  if (!updated_tuple) {
-    fprintf(stderr, "Failed to update tuple (%llu, %llu)\n", page_id, slot_id);
+  selection_criteria_t criteria = {0};
+  parse_selection_criteria(NULL, tokens[0], &criteria, &session);
+  int num_updates = query_update(session, &criteria, attributes);
+
+  for (int i = 0; i < criteria.proposition_count; i++) {
+    if (criteria.propositions[i].value.type == ATTRIBUTE_TYPE_STRING && criteria.propositions[i].value.string_value) {
+      // Append row to result
+      free(criteria.propositions[i].value.string_value);
+    }
+  }
+  free(criteria.propositions);
+
+  if (num_updates == -1) {
+    fprintf(stderr, "Failed to update tuples\n");
     return CLI_FAILURE_RETURN_CODE;
   }
 
-  print_tuple_info(updated_tuple, num_attributes, session->catalog);
-  printf(" updated\n");
-
+  printf("%d tuple%s updated successfully\n", num_updates, num_updates == 1 ? "" : "s");
   return CLI_SUCCESS_RETURN_CODE;
 }
 
@@ -839,77 +862,16 @@ int cli_query_select(dbms_manager_t* manager, char* input_line) {
     return CLI_FAILURE_RETURN_CODE;
   }
 
-  // Split propositions by ";"
-  char* save_ptr = NULL;
-  char* propositions[MAX_QUERY_SELECT_PROPOSITIONS];
-  int proposition_count = 0;
-
-  char* token = strtok_r(input_line, ";", &save_ptr);
-  while (token != NULL && proposition_count < MAX_QUERY_SELECT_PROPOSITIONS) {
-    propositions[proposition_count++] = token;
-    token = strtok_r(NULL, ";", &save_ptr);
-  }
-
-  if (proposition_count == 0) {
-    fprintf(stderr, "No propositions provided for select command\n");
-    return CLI_FAILURE_RETURN_CODE;
-  }
-  if (token != NULL) {
-    fprintf(stderr, "Exceeded maximum number of propositions (%d)\n", MAX_QUERY_SELECT_PROPOSITIONS);
-    return CLI_FAILURE_RETURN_CODE;
-  }
-
-  // The final token should be the table name
-  char* table_name_malloc = strdup(propositions[--proposition_count]);
-  if (!table_name_malloc) {
-    fprintf(stderr, "Memory allocation failed for table name\n");
-    return CLI_FAILURE_RETURN_CODE;
-  }
-  char* table_name = table_name_malloc;
-
-  // Remove leading/trailing whitespace
-  while (*table_name == ' ' || *table_name == '\t' || *table_name == '\n') {
-    table_name++;
-  }
-  char* end = table_name + strlen(table_name) - 1;
-  while (end > table_name && (*end == ' ' || *end == '\t' || *end == '\n')) {
-    *end = '\0';
-    end--;
-  }
-
-  dbms_session_t* session = get_session_by_name(manager, table_name);
-  if (!session) {
-    fprintf(stderr, "Table '%s' not found in DBMS manager\n", table_name);
-    free(table_name_malloc);
-    return CLI_FAILURE_RETURN_CODE;
-  }
-  free(table_name_malloc);
-  system_catalog_t* catalog = session->catalog;
-
   selection_criteria_t criteria = {0};
-  criteria.proposition_count = proposition_count;
-  criteria.propositions = calloc(proposition_count, sizeof(proposition_t));
-  if (!criteria.propositions) {
-    fprintf(stderr, "Memory allocation failed for selection criteria propositions\n");
-    return CLI_FAILURE_RETURN_CODE;
-  }
+  dbms_session_t* session = NULL;
 
-  for (int i = 0; i < proposition_count; i++) {
-    if (!generate_proposition(propositions[i], &criteria.propositions[i], catalog)) {
-      for (int j = 0; j < i; j++) {
-        if (criteria.propositions[j].value.type == ATTRIBUTE_TYPE_STRING &&
-            criteria.propositions[j].value.string_value) {
-          free(criteria.propositions[j].value.string_value);
-        }
-      }
-      free(criteria.propositions);
-      return CLI_FAILURE_RETURN_CODE;
-    }
+  if (parse_selection_criteria(manager, input_line, &criteria, &session) != CLI_SUCCESS_RETURN_CODE) {
+    return CLI_FAILURE_RETURN_CODE;
   }
 
   query_result_t* result = query_select(session, &criteria);
 
-  for (int i = 0; i < proposition_count; i++) {
+  for (int i = 0; i < criteria.proposition_count; i++) {
     if (criteria.propositions[i].value.type == ATTRIBUTE_TYPE_STRING && criteria.propositions[i].value.string_value) {
       free(criteria.propositions[i].value.string_value);
     }
@@ -1050,4 +1012,89 @@ static bool generate_proposition(char* proposition_str, proposition_t* propositi
   proposition->value.type = record->attribute_type;
 
   return true;
+}
+
+int parse_selection_criteria(dbms_manager_t* manager, char* input_line, selection_criteria_t* criteria,
+                             dbms_session_t** out_session) {
+  // Do different things if *out_session is NULL or not
+  // If *out_session is NULL, we assume that the last token is the table name, otherwise we already have a table name
+
+  char* save_ptr = NULL;
+  char* propositions[MAX_QUERY_SELECT_PROPOSITIONS];
+  int proposition_count = 0;
+
+  char* token = strtok_r(input_line, ";", &save_ptr);
+  while (token != NULL && proposition_count < MAX_QUERY_SELECT_PROPOSITIONS) {
+    propositions[proposition_count++] = token;
+    token = strtok_r(NULL, ";", &save_ptr);
+  }
+
+  if (proposition_count == 0) {
+    fprintf(stderr, "No propositions provided for command\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+  if (token != NULL) {
+    fprintf(stderr, "Exceeded maximum number of propositions (%d)\n", MAX_QUERY_SELECT_PROPOSITIONS);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  // The final token should be the table name if *out_session is NULL
+  dbms_session_t* session = NULL;
+  if (!*out_session && manager) {
+    char* table_name_malloc = strdup(propositions[--proposition_count]);
+    if (!table_name_malloc) {
+      fprintf(stderr, "Memory allocation failed for table name\n");
+      return CLI_FAILURE_RETURN_CODE;
+    }
+    char* table_name = table_name_malloc;
+
+    // Remove leading/trailing whitespace
+    while (*table_name == ' ' || *table_name == '\t' || *table_name == '\n') {
+      table_name++;
+    }
+    char* end = table_name + strlen(table_name) - 1;
+    while (end > table_name && (*end == ' ' || *end == '\t' || *end == '\n')) {
+      *end = '\0';
+      end--;
+    }
+
+    session = get_session_by_name(manager, table_name);
+    if (!session) {
+      fprintf(stderr, "Table '%s' not found in DBMS manager\n", table_name);
+      free(table_name_malloc);
+      return CLI_FAILURE_RETURN_CODE;
+    }
+    free(table_name_malloc);
+  } else if (*out_session) {
+    session = *out_session;
+  } else {
+    fprintf(stderr, "Invalid session\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  system_catalog_t* catalog = session->catalog;
+
+  criteria->proposition_count = proposition_count;
+  criteria->propositions = calloc(proposition_count, sizeof(proposition_t));
+  if (!criteria->propositions) {
+    fprintf(stderr, "Memory allocation failed for criteria propositions\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  for (int i = 0; i < proposition_count; i++) {
+    if (!generate_proposition(propositions[i], &criteria->propositions[i], catalog)) {
+      for (int j = 0; j < i; j++) {
+        if (criteria->propositions[j].value.type == ATTRIBUTE_TYPE_STRING &&
+            criteria->propositions[j].value.string_value) {
+          free(criteria->propositions[j].value.string_value);
+        }
+      }
+      free(criteria->propositions);
+      return CLI_FAILURE_RETURN_CODE;
+    }
+  }
+
+  *out_session = session;
+
+  return CLI_SUCCESS_RETURN_CODE;
 }
