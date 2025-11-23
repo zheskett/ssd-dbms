@@ -11,4 +11,4 @@ cp test.dat test3.dat
 cp test.dat test4.dat
 cp test.dat test5.dat
 cp test.dat test6.dat
-echo -e "$open_string$time_string_1$time_string_2$exit_string" | ./build/ssd-dbms-cli
+#echo -e "$open_string$time_string_1$time_string_2$exit_string" | ./build/ssd-dbms-cli
