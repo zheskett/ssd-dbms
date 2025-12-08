@@ -232,6 +232,7 @@ dbms_session_t* dbms_init_dbms_session(const char* filename) {
   for (uint32_t i = 0; i < BUFFER_POOL_SIZE; i++) {
     session->buffer_pool->buffer_pages[i].is_free = true;
     session->buffer_pool->buffer_pages[i].is_dirty = false;
+    session->buffer_pool->buffer_pages[i].pin_count = 0;
     session->buffer_pool->buffer_pages[i].last_updated = 0;
     session->buffer_pool->buffer_pages[i].page_id = 0;
     session->buffer_pool->buffer_pages[i].page = &pages[i];
@@ -476,22 +477,33 @@ buffer_page_t* dbms_run_buffer_pool_policy(dbms_session_t* session, uint64_t* ta
     }
   }
 
-  // Collect pointers to all buffer pages
+  // Collect pointers to UNPINNED buffer pages only
+  // Pages with pin_count > 0 are strictly ineligible for eviction
   buffer_page_t* pages[BUFFER_POOL_SIZE];
+  size_t unpinned_count = 0;
   for (size_t i = 0; i < BUFFER_POOL_SIZE; i++) {
-    pages[i] = &session->buffer_pool->buffer_pages[i];
+    buffer_page_t* bp = &session->buffer_pool->buffer_pages[i];
+    if (bp->pin_count == 0) {
+      pages[unpinned_count++] = bp;
+    }
   }
 
-  // Sort pages by last_updated (LRU first)
-  qsort(pages, BUFFER_POOL_SIZE, sizeof(buffer_page_t*), compare_buffer_pages);
+  // If all pages are pinned, buffer pool is exhausted
+  if (unpinned_count == 0) {
+    fprintf(stderr, "Buffer pool exhausted: all pages are pinned\n");
+    return NULL;
+  }
+
+  // Sort unpinned pages by last_updated (LRU first)
+  qsort(pages, unpinned_count, sizeof(buffer_page_t*), compare_buffer_pages);
 
   // CFLRU Policy:
   // 1. Divide the LRU list into two regions: Clean-First Window (older) and Working Region (newer)
   // 2. Search for a clean page in the Clean-First Window
   // 3. If found, evict it. If not, evict the LRU page (pages[0])
 
-  size_t window_size = BUFFER_POOL_SIZE / 2;
-  if (window_size == 0 && BUFFER_POOL_SIZE > 0) {
+  size_t window_size = unpinned_count / 2;
+  if (window_size == 0 && unpinned_count > 0) {
     window_size = 1;
   }
 
@@ -870,4 +882,70 @@ static tuple_t* replace_tuple_data(dbms_session_t* session, tuple_t* tuple, buff
   buffer_page->is_dirty = true;
   buffer_page->last_updated = session->update_ctr++;
   return tuple;
+}
+
+buffer_page_t* dbms_pin_page(dbms_session_t* session, uint64_t page_id) {
+  if (!session) {
+    return NULL;
+  }
+
+  buffer_page_t* buffer_page = dbms_get_buffer_page(session, page_id);
+  if (!buffer_page) {
+    return NULL;
+  }
+
+  buffer_page->pin_count++;
+  return buffer_page;
+}
+
+void dbms_unpin_page(dbms_session_t* session, buffer_page_t* buffer_page) {
+  if (!session || !buffer_page) {
+    return;
+  }
+
+  // Guard against underflow
+  if (buffer_page->pin_count > 0) {
+    buffer_page->pin_count--;
+  }
+}
+
+bool dbms_copy_tuple(dbms_session_t* session, const tuple_t* src, tuple_t* dest) {
+  if (!session || !src || !dest || !dest->attributes) {
+    return false;
+  }
+
+  dest->id = src->id;
+  dest->is_null = src->is_null;
+
+  uint8_t num_attributes = dbms_catalog_num_used(session->catalog);
+  for (uint8_t i = 0; i < num_attributes; i++) {
+    catalog_record_t* record = dbms_get_catalog_record(session->catalog, i);
+    if (!record) {
+      continue;
+    }
+
+    dest->attributes[i].type = src->attributes[i].type;
+
+    switch (record->attribute_type) {
+      case ATTRIBUTE_TYPE_INT:
+        dest->attributes[i].int_value = src->attributes[i].int_value;
+        break;
+      case ATTRIBUTE_TYPE_FLOAT:
+        dest->attributes[i].float_value = src->attributes[i].float_value;
+        break;
+      case ATTRIBUTE_TYPE_STRING:
+        if (dest->attributes[i].string_value && src->attributes[i].string_value) {
+          strncpy(dest->attributes[i].string_value, src->attributes[i].string_value, record->attribute_size);
+          dest->attributes[i].string_value[record->attribute_size] = '\0';
+        }
+        break;
+      case ATTRIBUTE_TYPE_BOOL:
+        dest->attributes[i].bool_value = src->attributes[i].bool_value;
+        break;
+      default:
+        break;
+    }
+  }
+
+  return true;
 }

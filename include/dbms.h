@@ -71,6 +71,7 @@ typedef struct {
 typedef struct {
   bool is_free;
   bool is_dirty;
+  uint32_t pin_count;
   uint32_t last_updated;
   uint64_t page_id;
   page_t* page;
@@ -318,5 +319,34 @@ bool dbms_delete_tuple(dbms_session_t* session, tuple_id_t tuple_id);
  * @return Pointer to the tuple, or NULL if not found
  */
 tuple_t* dbms_get_tuple(dbms_session_t* session, tuple_id_t tuple_id);
+
+/**
+ * @brief Pins a buffer page, incrementing its reference count.
+ * If page is not in buffer, loads it from disk.
+ *
+ * @param session Pointer to the DBMS session
+ * @param page_id ID of the page to pin
+ * @return Pointer to the pinned buffer page, or NULL on failure
+ */
+buffer_page_t* dbms_pin_page(dbms_session_t* session, uint64_t page_id);
+
+/**
+ * @brief Unpins a buffer page, decrementing its reference count.
+ * Page becomes eligible for eviction when pin_count reaches 0.
+ *
+ * @param session Pointer to the DBMS session
+ * @param buffer_page Pointer to the buffer page to unpin
+ */
+void dbms_unpin_page(dbms_session_t* session, buffer_page_t* buffer_page);
+
+/**
+ * @brief Creates a deep copy of a tuple, allocating new string buffers.
+ *
+ * @param session The DBMS session (for catalog info)
+ * @param src Source tuple to copy
+ * @param dest Pre-allocated destination tuple (with pre-allocated attributes array)
+ * @return true on success, false on failure
+ */
+bool dbms_copy_tuple(dbms_session_t* session, const tuple_t* src, tuple_t* dest);
 
 #endif /* DBMS_H */
