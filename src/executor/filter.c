@@ -7,6 +7,7 @@
 static void filter_open(Operator* self);
 static tuple_t* filter_next(Operator* self);
 static void filter_close(Operator* self);
+static void filter_reset(Operator* self);
 
 // Forward declarations for predicate evaluation
 static bool evaluate_proposition(const attribute_value_t* attribute, const proposition_t* proposition);
@@ -35,6 +36,7 @@ Operator* filter_create(Operator* child, dbms_session_t* session, selection_crit
   op->open = filter_open;
   op->next = filter_next;
   op->close = filter_close;
+  op->reset = filter_reset;
   op->destroy = NULL;  // criteria is not owned by this operator
 
   // Set up child relationship
@@ -100,6 +102,18 @@ static void filter_close(Operator* self) {
   Operator* child = self->children[0];
   if (child && child->close) {
     child->close(child);
+  }
+}
+
+static void filter_reset(Operator* self) {
+  if (!self || !self->children || self->child_count < 1) {
+    return;
+  }
+
+  // Simply reset the child operator
+  Operator* child = self->children[0];
+  if (child && child->reset) {
+    child->reset(child);
   }
 }
 

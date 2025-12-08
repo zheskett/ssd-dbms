@@ -6,6 +6,7 @@
 static void seq_scan_open(Operator* self);
 static tuple_t* seq_scan_next(Operator* self);
 static void seq_scan_close(Operator* self);
+static void seq_scan_reset(Operator* self);
 
 Operator* seq_scan_create(dbms_session_t* session) {
   if (!session) {
@@ -33,6 +34,7 @@ Operator* seq_scan_create(dbms_session_t* session) {
   op->open = seq_scan_open;
   op->next = seq_scan_next;
   op->close = seq_scan_close;
+  op->reset = seq_scan_reset;
   op->destroy = NULL;  // No extra allocations to free
   op->children = NULL;
   op->child_count = 0;
@@ -115,5 +117,29 @@ static void seq_scan_close(Operator* self) {
   // Reset state
   state->current_page_id = 0;
   state->current_slot_id = 0;
+}
+
+static void seq_scan_reset(Operator* self) {
+  if (!self || !self->state) {
+    return;
+  }
+
+  SeqScanState* state = (SeqScanState*)self->state;
+
+  // Unpin current page if held
+  if (state->current_buffer_page) {
+    dbms_unpin_page(state->session, state->current_buffer_page);
+  }
+
+  // Reset to beginning
+  state->current_page_id = 1;
+  state->current_slot_id = 0;
+
+  // Re-pin first page
+  if (state->session->page_count > 0) {
+    state->current_buffer_page = dbms_pin_page(state->session, state->current_page_id);
+  } else {
+    state->current_buffer_page = NULL;
+  }
 }
 

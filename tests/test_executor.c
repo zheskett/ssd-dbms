@@ -156,7 +156,7 @@ static void test_project_columns() {
   uint8_t columns[] = {0, 2};
 
   Operator* scan = seq_scan_create(test_dbms_session);
-  Operator* project = project_create(scan, test_dbms_session, columns, 2);
+  Operator* project = project_create(scan, test_dbms_session, columns, 2, false);
   TEST_ASSERT_NOT_NULL(project);
 
   OP_OPEN(project);
@@ -192,7 +192,7 @@ static void test_left_deep_tree() {
 
   Operator* scan = seq_scan_create(test_dbms_session);
   Operator* filter = filter_create(scan, test_dbms_session, &criteria);
-  Operator* project = project_create(filter, test_dbms_session, columns, 2);
+  Operator* project = project_create(filter, test_dbms_session, columns, 2, false);
   TEST_ASSERT_NOT_NULL(project);
 
   OP_OPEN(project);

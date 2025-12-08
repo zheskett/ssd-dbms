@@ -12,6 +12,7 @@ struct Operator {
     void  (*open)(Operator* self);
     tuple_t* (*next)(Operator* self);     // Zero-copy: returns pointer to buffer pool
     void  (*close)(Operator* self);
+    void  (*reset)(Operator* self);       // Restart scan from beginning (for nested loops)
 
     // Cleanup function for operator-specific state (called by operator_free)
     void  (*destroy)(Operator* self);
@@ -24,6 +25,7 @@ struct Operator {
 #define OP_OPEN(op)  ((op)->open(op))
 #define OP_NEXT(op)  ((op)->next(op))
 #define OP_CLOSE(op) ((op)->close(op))
+#define OP_RESET(op) ((op)->reset(op))
 
 /**
  * @brief Frees an operator and its children recursively
