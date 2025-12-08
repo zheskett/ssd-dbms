@@ -52,6 +52,7 @@ ctest --output-on-failure
 | `<table_name> fill <num_records> <start_number>` | Fills the database with the specified number of records. The records will have sequential values starting from `start_number`. |
 | `<table_name> evict all` | Evicts the entire table from the buffer pool, writing back any modified pages to disk. |
 | `<table_name> evict page <page_id>` | Evicts the specified page from the buffer pool, writing it back to disk if it has been modified. (page_id starts at 1) |
+| `<table_name> index <attribute_name>` | Creates a hash index on the specified attribute (speeds up equality select queries) |
 | `exit` | Exits the CLI. |
 
 ### Query Commands and Propositions

@@ -14,6 +14,7 @@
 #define CLI_SPLIT_COMMAND "split"
 #define CLI_TIME_COMMAND "time"
 #define CLI_QUERY_COMMAND "query"
+#define CLI_INDEX_COMMAND "index"
 
 #define CLI_QUERY_SELECT_COMMAND "select"
 
@@ -150,5 +151,14 @@ int cli_query_command(dbms_manager_t* manager, char* input_line);
  * @return CLI return code
  */
 int cli_query_select(dbms_manager_t* manager, char* input_line);
+
+/**
+ * @brief Creates an index on the chosen attribute
+ *
+ * @param manager Pointer to the DBMS session
+ * @param input_line Input line containing index attribute
+ * @return CLI return code
+ */
+int cli_index_command(dbms_session_t* session, char* input_line);
 
 #endif /* CLI_COMMANDS_H */
