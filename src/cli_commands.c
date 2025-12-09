@@ -7,16 +7,13 @@
 
 #include "pretty.h"
 #include "query.h"
+#include "index.h"
 
-static bool populate_attribute_values_from_tokens(system_catalog_t* catalog, char** tokens, uint8_t num_attributes,
-                                                  attribute_value_t* attributes);
-
+static bool populate_attribute_values_from_tokens(system_catalog_t* catalog, char** tokens, uint8_t num_attributes, attribute_value_t* attributes);
 static void print_tuple_info(tuple_t* tuple, uint8_t num_attributes, system_catalog_t* catalog);
 
 static bool generate_proposition(char* proposition_str, proposition_t* proposition, const system_catalog_t* catalog);
-
-static int parse_selection_criteria(dbms_manager_t* manager, char* input_line, selection_criteria_t* criteria,
-                                    dbms_session_t** out_session);
+static int parse_selection_criteria(dbms_manager_t* manager, char* input_line, selection_criteria_t* criteria, dbms_session_t** out_session);
 
 static int cli_table_exec(dbms_session_t* session, char* input_line) {
   char* save_ptr = NULL;
@@ -37,6 +34,8 @@ static int cli_table_exec(dbms_session_t* session, char* input_line) {
     return cli_update_command(session, input_line);
   } else if (strcmp(command, CLI_FILL_COMMAND) == 0) {
     return cli_fill_command(session, input_line);
+  } else if (strcmp(command, CLI_INDEX_COMMAND) == 0) {
+      return cli_index_command(session, input_line);
   } else {
     fprintf(stderr, "Unknown command: %s\n", command);
     return CLI_FAILURE_RETURN_CODE;
@@ -118,6 +117,37 @@ int cli_exec(dbms_manager_t* manager, char* input) {
   }
 
   return cli_table_exec(session, input_line);
+}
+
+int cli_index_command(dbms_session_t* session, char* input_line) {
+    if (!session || !input_line) return CLI_FAILURE_RETURN_CODE;
+    
+    // input_line should be the attribute name
+    char* attribute_name = input_line;
+    // Trim
+    while (*attribute_name == ' ' || *attribute_name == '\t') attribute_name++;
+    char* end = attribute_name + strlen(attribute_name) - 1;
+    while (end > attribute_name && (*end == ' ' || *end == '\t' || *end == '\n')) *end-- = '\0';
+    
+    catalog_record_t* record = dbms_get_catalog_record_by_name(session->catalog, attribute_name);
+    if (!record) {
+        fprintf(stderr, "Attribute '%s' not found.\n", attribute_name);
+        return CLI_FAILURE_RETURN_CODE;
+    }
+
+    if (session->indexes[record->attribute_order]) {
+        printf("Index already exists for %s\n", attribute_name);
+        return CLI_SUCCESS_RETURN_CODE;
+    }
+
+    session->indexes[record->attribute_order] = index_create(session, record->attribute_order);
+    if (session->indexes[record->attribute_order]) {
+        printf("Index created for %s\n", attribute_name);
+        return CLI_SUCCESS_RETURN_CODE;
+    } else {
+        fprintf(stderr, "Failed to create index\n");
+        return CLI_FAILURE_RETURN_CODE;
+    }
 }
 
 int cli_insert_command(dbms_session_t* session, char* input_line) {

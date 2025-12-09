@@ -1,4 +1,5 @@
 #include "query.h"
+#include "index.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,32 +16,24 @@ static bool check_operator_greater_than(const attribute_value_t* attribute, cons
 static bool check_operator_greater_equal(const attribute_value_t* attribute, const attribute_value_t* value);
 
 void query_free_query_result(query_result_t* result) {
-  if (!result) {
-    return;
-  }
-
+  if (!result) return;
+  
   if (result->rows) {
     for (size_t i = 0; i < result->row_count; i++) {
-      if (!result->rows[i]) {
-        continue;
-      }
-
-      for (size_t j = 0; j < result->column_count; j++) {
-        attribute_value_t* attr = &result->rows[i][j];
-        if (attr->type == ATTRIBUTE_TYPE_STRING && attr->string_value) {
-          free(attr->string_value);
+      if (result->rows[i]) {
+        for (size_t j = 0; j < result->column_count; j++) {
+          attribute_value_t* attr = &result->rows[i][j];
+          if (attr->type == ATTRIBUTE_TYPE_STRING && attr->string_value) free(attr->string_value);
         }
+        free(result->rows[i]);
       }
-      free(result->rows[i]);
     }
     free(result->rows);
   }
 
   if (result->column_names) {
     for (size_t j = 0; j < result->column_count; j++) {
-      if (result->column_names[j]) {
-        free(result->column_names[j]);
-      }
+      if (result->column_names[j]) free(result->column_names[j]);
     }
     free(result->column_names);
   }
@@ -69,48 +62,92 @@ query_result_t* query_select(dbms_session_t* session, selection_criteria_t* crit
     result->column_names[i] = strndup(record->attribute_name, CATALOG_ATTRIBUTE_NAME_SIZE);
   }
 
-  // Iterate through all tuples in the database and apply selection criteria
-  uint64_t tuples_per_page = dbms_catalog_tuples_per_page(session->catalog);
-  for (uint64_t page_id = 1; page_id <= session->page_count; page_id++) {
-    for (uint64_t tuple_index = 0; tuple_index < tuples_per_page; tuple_index++) {
-      tuple_t* tuple = dbms_get_tuple(session, (tuple_id_t){.page_id = page_id, .slot_id = tuple_index});
-      // Skip null tuples
-      if (!tuple) {
-        continue;
-      }
+  // Check if we can use an index
+  tuple_id_t* indexed_tids = NULL;
+  size_t indexed_count = 0;
+  bool using_index = false;
 
-      // Evaluate selection criteria
+  if (session->indexes) {
+    for (size_t i = 0; i < criteria->proposition_count; i++) {
+      proposition_t* prop = &criteria->propositions[i];
+      if (prop->operator == OPERATOR_EQUAL && session->indexes[prop->attribute_index]) {
+        uint64_t key = index_hash_attribute(&prop->value);
+        indexed_tids = index_lookup(session->indexes[prop->attribute_index], key, &indexed_count);
+        if (indexed_tids) {
+          using_index = true;
+          break; 
+        }
+      }
+    }
+  }
+
+  if (using_index) {
+    // Indexed Scan
+    for (size_t i = 0; i < indexed_count; i++) {
+      tuple_t* tuple = dbms_get_tuple(session, indexed_tids[i]);
+      if (!tuple) continue;
+
       bool matches = true;
-      for (size_t proposition_index = 0; proposition_index < criteria->proposition_count; proposition_index++) {
-        proposition_t* proposition = &criteria->propositions[proposition_index];
-        attribute_value_t* attribute = &tuple->attributes[proposition->attribute_index];
-        if (!evaluate_proposition(attribute, proposition)) {
+      for (size_t p = 0; p < criteria->proposition_count; p++) {
+        if (!evaluate_proposition(&tuple->attributes[criteria->propositions[p].attribute_index], &criteria->propositions[p])) {
           matches = false;
           break;
         }
       }
-
+      
       if (matches) {
-        // Add tuple to result set
         attribute_value_t* result_row = calloc(result->column_count, sizeof(attribute_value_t));
-        if (!result_row) {
-          fprintf(stderr, "Memory allocation failed for query result row\n");
-          query_free_query_result(result);
-          return NULL;
-        }
-
         copy_attribute_values(result_row, tuple->attributes, result->column_count);
-
-        // Append row to result
         attribute_value_t** new_rows = realloc(result->rows, (result->row_count + 1) * sizeof(attribute_value_t*));
-        if (!new_rows) {
-          fprintf(stderr, "Memory allocation failed for expanding query result rows\n");
-          free(result_row);
-          query_free_query_result(result);
-          return NULL;
-        }
         result->rows = new_rows;
         result->rows[result->row_count++] = result_row;
+      }
+    }
+    free(indexed_tids);
+  } else {
+    // Full Table Scan
+    uint64_t tuples_per_page = dbms_catalog_tuples_per_page(session->catalog);
+    for (uint64_t page_id = 1; page_id <= session->page_count; page_id++) {
+      for (uint64_t tuple_index = 0; tuple_index < tuples_per_page; tuple_index++) {
+        tuple_t* tuple = dbms_get_tuple(session, (tuple_id_t){.page_id = page_id, .slot_id = tuple_index});
+        // Skip null tuples
+        if (!tuple) {
+          continue;
+        }
+
+        // Evaluate selection criteria
+        bool matches = true;
+        for (size_t proposition_index = 0; proposition_index < criteria->proposition_count; proposition_index++) {
+          proposition_t* proposition = &criteria->propositions[proposition_index];
+          attribute_value_t* attribute = &tuple->attributes[proposition->attribute_index];
+          if (!evaluate_proposition(attribute, proposition)) {
+            matches = false;
+            break;
+          }
+        }
+
+        if (matches) {
+          // Add tuple to result set
+          attribute_value_t* result_row = calloc(result->column_count, sizeof(attribute_value_t));
+          if (!result_row) {
+            fprintf(stderr, "Memory allocation failed for query result row\n");
+            query_free_query_result(result);
+            return NULL;
+          }
+
+          copy_attribute_values(result_row, tuple->attributes, result->column_count);
+
+          // Append row to result
+          attribute_value_t** new_rows = realloc(result->rows, (result->row_count + 1) * sizeof(attribute_value_t*));
+          if (!new_rows) {
+            fprintf(stderr, "Memory allocation failed for expanding query result rows\n");
+            free(result_row);
+            query_free_query_result(result);
+            return NULL;
+          }
+          result->rows = new_rows;
+          result->rows[result->row_count++] = result_row;
+        }
       }
     }
   }

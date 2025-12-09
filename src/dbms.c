@@ -1,4 +1,5 @@
 #include "dbms.h"
+#include "index.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -284,6 +285,14 @@ dbms_session_t* dbms_init_dbms_session(const char* filename) {
     }
   }
 
+  // Index initialization
+  session->indexes = calloc(session->catalog->record_count, sizeof(index_t*));
+  if (!session->indexes) {
+    fprintf(stderr, "Memory allocation failed for session indexes\n");
+    dbms_free_dbms_session(session);
+    return NULL;
+  }
+
   return session;
 }
 
@@ -295,6 +304,17 @@ void dbms_free_dbms_session(dbms_session_t* session) {
     if (session->buffer_pool) {
       dbms_free_buffer_pool(session->catalog, session->buffer_pool);
     }
+    
+    // Free indexes
+    if (session->indexes) {
+      for (uint8_t i = 0; i < session->catalog->record_count; i++) {
+        if (session->indexes[i]) {
+          index_free(session->indexes[i]);
+        }
+      }
+      free(session->indexes);
+    }
+
     if (session->catalog) {
       dbms_free_system_catalog(session->catalog);
     }
@@ -722,7 +742,19 @@ tuple_t* dbms_insert_tuple(dbms_session_t* session, attribute_value_t* attribute
   uint64_t slot_id = free_space_offset / session->catalog->tuple_size;
   tuple_t* tuple = &target_page->tuples[slot_id];
 
-  return replace_tuple_data(session, tuple, target_page, attributes);
+  tuple_t* inserted = replace_tuple_data(session, tuple, target_page, attributes);
+
+  // Update indexes
+  if (inserted && session->indexes) {
+      uint8_t num_attributes = dbms_catalog_num_used(session->catalog);
+      for (uint8_t i = 0; i < num_attributes; i++) {
+          if (session->indexes[i]) {
+              uint64_t key = index_hash_attribute(&inserted->attributes[i]);
+              index_insert(session->indexes[i], key, inserted->id);
+          }
+      }
+  }
+  return inserted;
 }
 
 tuple_t* dbms_update_tuple(dbms_session_t* session, tuple_id_t tuple_id, attribute_value_t* new_attributes) {
@@ -748,7 +780,29 @@ tuple_t* dbms_update_tuple(dbms_session_t* session, tuple_id_t tuple_id, attribu
     return NULL;
   }
 
-  return replace_tuple_data(session, tuple, buffer_page, new_attributes);
+  // Update indexes (delete old)
+  uint8_t num_attributes = dbms_catalog_num_used(session->catalog);
+  if (session->indexes) {
+      for (uint8_t i = 0; i < num_attributes; i++) {
+          if (session->indexes[i]) {
+              uint64_t key = index_hash_attribute(&tuple->attributes[i]);
+              index_delete(session->indexes[i], key, tuple->id);
+          }
+      }
+  }
+
+  tuple_t* updated = replace_tuple_data(session, tuple, buffer_page, new_attributes);
+
+  // Update indexes (insert new)
+  if (updated && session->indexes) {
+      for (uint8_t i = 0; i < num_attributes; i++) {
+          if (session->indexes[i]) {
+              uint64_t key = index_hash_attribute(&updated->attributes[i]);
+              index_insert(session->indexes[i], key, updated->id);
+          }
+      }
+  }
+  return updated;
 }
 
 bool dbms_delete_tuple(dbms_session_t* session, tuple_id_t tuple_id) {
@@ -773,6 +827,17 @@ bool dbms_delete_tuple(dbms_session_t* session, tuple_id_t tuple_id) {
   if (tuple->is_null) {
     fprintf(stderr, "Tuple %llu:%llu is already null\n", tuple_id.page_id, tuple_id.slot_id);
     return false;
+  }
+
+  // Update indexes
+  if (session->indexes) {
+      uint8_t num_attributes = dbms_catalog_num_used(session->catalog);
+      for (uint8_t i = 0; i < num_attributes; i++) {
+          if (session->indexes[i]) {
+              uint64_t key = index_hash_attribute(&tuple->attributes[i]);
+              index_delete(session->indexes[i], key, tuple->id);
+          }
+      }
   }
 
   // Get tuple data location
