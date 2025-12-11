@@ -16,6 +16,8 @@
 #define CLI_QUERY_COMMAND "query"
 
 #define CLI_QUERY_SELECT_COMMAND "select"
+#define CLI_QUERY_PIPELINE_COMMAND "pipeline"
+#define CLI_QUERY_JOIN_COMMAND "join"
 
 #define MAX_SPLITS 16
 #define MAX_QUERY_SELECT_PROPOSITIONS 32
@@ -150,5 +152,23 @@ int cli_query_command(dbms_manager_t* manager, char* input_line);
  * @return CLI return code
  */
 int cli_query_select(dbms_manager_t* manager, char* input_line);
+
+/**
+ * @brief Executes a pipeline query using Iterator Model (Project->Filter->SeqScan)
+ *
+ * @param manager Pointer to the DBMS manager
+ * @param input_line Input line containing predicates and table name
+ * @return CLI return code
+ */
+int cli_query_pipeline(dbms_manager_t* manager, char* input_line);
+
+/**
+ * @brief Executes a cross-product join using Nested Loop Join operator
+ *
+ * @param manager Pointer to the DBMS manager
+ * @param input_line Input line containing two table names
+ * @return CLI return code
+ */
+int cli_query_join(dbms_manager_t* manager, char* input_line);
 
 #endif /* CLI_COMMANDS_H */

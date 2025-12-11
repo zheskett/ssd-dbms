@@ -8,6 +8,13 @@
 #include "pretty.h"
 #include "query.h"
 
+// Executor includes for Iterator Model operators
+#include "executor/executor.h"
+#include "executor/filter.h"
+#include "executor/nested_loop_join.h"
+#include "executor/project.h"
+#include "executor/seq_scan.h"
+
 static bool populate_attribute_values_from_tokens(system_catalog_t* catalog, char** tokens, uint8_t num_attributes,
                                                   attribute_value_t* attributes);
 
@@ -846,6 +853,10 @@ int cli_query_command(dbms_manager_t* manager, char* input_line) {
 
   if (strcmp(command, CLI_QUERY_SELECT_COMMAND) == 0) {
     return cli_query_select(manager, save_ptr);
+  } else if (strcmp(command, CLI_QUERY_PIPELINE_COMMAND) == 0) {
+    return cli_query_pipeline(manager, save_ptr);
+  } else if (strcmp(command, CLI_QUERY_JOIN_COMMAND) == 0) {
+    return cli_query_join(manager, save_ptr);
   } else {
     fprintf(stderr, "Unknown query command: %s\n", command);
     return CLI_FAILURE_RETURN_CODE;
@@ -884,6 +895,231 @@ int cli_query_select(dbms_manager_t* manager, char* input_line) {
 
   print_query_result(result);
   query_free_query_result(result);
+  return CLI_SUCCESS_RETURN_CODE;
+}
+
+int cli_query_pipeline(dbms_manager_t* manager, char* input_line) {
+  if (!manager) {
+    fprintf(stderr, "Invalid manager\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+  if (!input_line) {
+    fprintf(stderr, "No input line provided for pipeline command\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  // Parse selection criteria (reuses existing parsing logic)
+  selection_criteria_t criteria = {0};
+  dbms_session_t* session = NULL;
+
+  if (parse_selection_criteria(manager, input_line, &criteria, &session) != CLI_SUCCESS_RETURN_CODE) {
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  // Get number of columns for SELECT *
+  uint8_t num_columns = dbms_catalog_num_used(session->catalog);
+
+  // Create column indices array for all columns (SELECT *)
+  uint8_t* column_indices = malloc(num_columns * sizeof(uint8_t));
+  if (!column_indices) {
+    fprintf(stderr, "Memory allocation failed for column indices\n");
+    goto cleanup_criteria;
+  }
+  for (uint8_t i = 0; i < num_columns; i++) {
+    column_indices[i] = i;
+  }
+
+  // Build operator tree: Project -> Filter -> SeqScan
+  Operator* seq_scan = seq_scan_create(session);
+  if (!seq_scan) {
+    fprintf(stderr, "Failed to create SeqScan operator\n");
+    free(column_indices);
+    goto cleanup_criteria;
+  }
+
+  Operator* filter = filter_create(seq_scan, session, &criteria);
+  if (!filter) {
+    fprintf(stderr, "Failed to create Filter operator\n");
+    operator_free(seq_scan);
+    free(column_indices);
+    goto cleanup_criteria;
+  }
+
+  Operator* project = project_create(filter, session, column_indices, num_columns, false);
+  if (!project) {
+    fprintf(stderr, "Failed to create Project operator\n");
+    operator_free(filter);
+    free(column_indices);
+    goto cleanup_criteria;
+  }
+
+  // Execute pipeline
+  OP_OPEN(project);
+
+  printf("Pipeline Query Results:\n");
+  printf("----------------------------------------\n");
+
+  int tuple_count = 0;
+  tuple_t* tuple;
+  while ((tuple = OP_NEXT(project)) != NULL) {
+    print_tuple_info(tuple, num_columns, session->catalog);
+    printf("\n");
+    tuple_count++;
+  }
+
+  printf("----------------------------------------\n");
+  printf("%d tuple%s returned\n", tuple_count, tuple_count == 1 ? "" : "s");
+
+  // Cleanup
+  OP_CLOSE(project);
+  operator_free(project);
+  free(column_indices);
+
+  // Free criteria propositions
+  for (int i = 0; i < criteria.proposition_count; i++) {
+    if (criteria.propositions[i].value.type == ATTRIBUTE_TYPE_STRING && criteria.propositions[i].value.string_value) {
+      free(criteria.propositions[i].value.string_value);
+    }
+  }
+  free(criteria.propositions);
+
+  return CLI_SUCCESS_RETURN_CODE;
+
+cleanup_criteria:
+  for (int i = 0; i < criteria.proposition_count; i++) {
+    if (criteria.propositions[i].value.type == ATTRIBUTE_TYPE_STRING && criteria.propositions[i].value.string_value) {
+      free(criteria.propositions[i].value.string_value);
+    }
+  }
+  free(criteria.propositions);
+  return CLI_FAILURE_RETURN_CODE;
+}
+
+int cli_query_join(dbms_manager_t* manager, char* input_line) {
+  if (!manager) {
+    fprintf(stderr, "Invalid manager\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+  if (!input_line) {
+    fprintf(stderr, "No input line provided for join command\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  // Parse two table names
+  char* save_ptr = NULL;
+  char* table_a_name = strtok_r(input_line, " \t\n", &save_ptr);
+  char* table_b_name = strtok_r(NULL, " \t\n", &save_ptr);
+
+  if (!table_a_name || !table_b_name) {
+    fprintf(stderr, "Usage: query join <table_A> <table_B>\n");
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  // Get sessions for both tables
+  dbms_session_t* session_a = get_session_by_name(manager, table_a_name);
+  if (!session_a) {
+    fprintf(stderr, "Table '%s' not found in DBMS manager\n", table_a_name);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  dbms_session_t* session_b = get_session_by_name(manager, table_b_name);
+  if (!session_b) {
+    fprintf(stderr, "Table '%s' not found in DBMS manager\n", table_b_name);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  // Get column counts from each catalog
+  uint8_t outer_col_count = dbms_catalog_num_used(session_a->catalog);
+  uint8_t inner_col_count = dbms_catalog_num_used(session_b->catalog);
+
+  // Build operator tree: NestedLoopJoin -> (SeqScan(A), SeqScan(B))
+  Operator* seq_scan_a = seq_scan_create(session_a);
+  if (!seq_scan_a) {
+    fprintf(stderr, "Failed to create SeqScan operator for table '%s'\n", table_a_name);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  Operator* seq_scan_b = seq_scan_create(session_b);
+  if (!seq_scan_b) {
+    fprintf(stderr, "Failed to create SeqScan operator for table '%s'\n", table_b_name);
+    operator_free(seq_scan_a);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  // Use session_a as the primary session for the join (for pin management)
+  Operator* join = nested_loop_join_create(seq_scan_a, seq_scan_b, session_a, outer_col_count, inner_col_count);
+  if (!join) {
+    fprintf(stderr, "Failed to create NestedLoopJoin operator\n");
+    operator_free(seq_scan_a);
+    operator_free(seq_scan_b);
+    return CLI_FAILURE_RETURN_CODE;
+  }
+
+  // Execute join
+  OP_OPEN(join);
+
+  printf("Join Query Results (%s x %s):\n", table_a_name, table_b_name);
+  printf("----------------------------------------\n");
+
+  int tuple_count = 0;
+  tuple_t* tuple;
+  while ((tuple = OP_NEXT(join)) != NULL) {
+    // Print combined tuple manually (outer attrs, then inner attrs)
+    printf("(");
+
+    // Print outer table attributes
+    for (uint8_t i = 0; i < outer_col_count; i++) {
+      if (i > 0) printf(", ");
+      attribute_value_t* attr = &tuple->attributes[i];
+      switch (attr->type) {
+        case ATTRIBUTE_TYPE_INT:
+          printf("%d", attr->int_value);
+          break;
+        case ATTRIBUTE_TYPE_FLOAT:
+          printf("%f", attr->float_value);
+          break;
+        case ATTRIBUTE_TYPE_STRING:
+          printf("%s", attr->string_value);
+          break;
+        case ATTRIBUTE_TYPE_BOOL:
+          printf("%s", attr->bool_value ? "true" : "false");
+          break;
+      }
+    }
+
+    printf(" | ");
+
+    // Print inner table attributes
+    for (uint8_t i = 0; i < inner_col_count; i++) {
+      if (i > 0) printf(", ");
+      attribute_value_t* attr = &tuple->attributes[outer_col_count + i];
+      switch (attr->type) {
+        case ATTRIBUTE_TYPE_INT:
+          printf("%d", attr->int_value);
+          break;
+        case ATTRIBUTE_TYPE_FLOAT:
+          printf("%f", attr->float_value);
+          break;
+        case ATTRIBUTE_TYPE_STRING:
+          printf("%s", attr->string_value);
+          break;
+        case ATTRIBUTE_TYPE_BOOL:
+          printf("%s", attr->bool_value ? "true" : "false");
+          break;
+      }
+    }
+
+    printf(")\n");
+    tuple_count++;
+  }
+
+  printf("----------------------------------------\n");
+  printf("%d tuple%s returned\n", tuple_count, tuple_count == 1 ? "" : "s");
+
+  // Cleanup
+  OP_CLOSE(join);
+  operator_free(join);
+
   return CLI_SUCCESS_RETURN_CODE;
 }
 
