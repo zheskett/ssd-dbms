@@ -3,6 +3,12 @@
 
 #include "dbms.h"
 
+// Configuration for Lazy-Split Linear Hashing
+// Split when load factor > 0.75 AND the split candidate chain > 3 nodes
+#define LOAD_FACTOR_NUMERATOR 3
+#define LOAD_FACTOR_DENOMINATOR 4
+#define LAZY_SPLIT_THRESHOLD 3 
+
 // Simple chained hash node for storing Tuple IDs
 typedef struct index_node {
   uint64_t key;
@@ -12,8 +18,14 @@ typedef struct index_node {
 
 struct index {
   index_node_t** buckets;
-  size_t bucket_count;
-  size_t count;
+  
+  // Linear Hashing State
+  size_t capacity;
+  size_t bucket_count;          // Current number of active buckets (N)
+  size_t initial_bucket_count;  // N at level 0
+  size_t num_records;           // Total records in index
+  size_t level;                 // Current level (L)
+  size_t next_split;            // Split pointer (p)
 };
 
 /**
@@ -33,7 +45,7 @@ index_t* index_create(dbms_session_t* session, uint8_t attribute_index);
 void index_free(index_t* idx);
 
 /**
- * @brief Inserts an entry into the index
+ * @brief Inserts an entry into the index using Lazy-Split Linear Hashing
  * 
  * @param idx Pointer to the index
  * @param key Hash of the attribute value

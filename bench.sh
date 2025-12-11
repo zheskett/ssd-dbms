@@ -1,17 +1,19 @@
+# quick benchmarking test of indexes
+
 #!/bin/bash
 
 ./ssd-dbms-cli <<EOF
-create bench.db
+create bench.dat
 id
 1
 name
 3
 32
 finish
-open bench.db
-bench fill 200000 0
-time query select id = 199999; bench
+open bench.dat
+bench fill 20000 0
+time query select id = 12345; bench
 bench index id
-time query select id = 199999; bench
+time query select id = 12345; bench
 exit
 EOF
