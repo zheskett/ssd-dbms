@@ -26,6 +26,9 @@
 
 #define PADDING_NAME "PADDING"
 
+// Forward declaration for index
+typedef struct index index_t;
+
 typedef struct {
   uint64_t next_page;
   uint64_t prev_page;
@@ -92,6 +95,7 @@ typedef struct {
   char* filename;
   system_catalog_t* catalog;
   buffer_pool_t* buffer_pool;
+  index_t** indexes;
 } dbms_session_t;
 
 typedef struct {
