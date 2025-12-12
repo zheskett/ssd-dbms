@@ -24,7 +24,7 @@ int ssdio_open(const char* filename, bool is_new) {
   int flags = O_RDWR | O_CLOEXEC | O_BINARY | (is_new ? O_CREAT | O_TRUNC : 0);
   int mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
 #if defined(ON_LINUX)
-  fd = open(filename, flags | O_DIRECT, mode);
+  fd = open(filename, flags, mode);
   if (fd >= 0) {
     // Try to not use read-ahead on Linux
     posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM);
@@ -46,9 +46,7 @@ int ssdio_open(const char* filename, bool is_new) {
   return fd;
 }
 
-int ssdio_close(int fd) {
-  return close(fd);
-}
+int ssdio_close(int fd) { return close(fd); }
 
 int ssdio_flush(int fd) {
 #if defined(ON_MAC)
