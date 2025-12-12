@@ -63,11 +63,35 @@ The `query` command allows you to execute queries on the database. The syntax fo
 
 Where `<query_command>` is of the form:
 
-#### Select Command
+#### Select Command (Legacy)
 
 `select <proposition1>; [<proposition2>; ...] <table_name>`
 
-Selects records from the database that satisfy the given propositions.
+Selects records from the database that satisfy the given propositions. Uses the legacy query engine.
+
+#### Pipeline Command (Iterator Model)
+
+`pipeline <proposition1>; [<proposition2>; ...] <table_name>`
+
+Executes a query using the **Iterator Model** with a `Project -> Filter -> SeqScan` operator pipeline. Returns all columns (`SELECT *`) that match the given predicates. This command demonstrates the Zero-Copy query execution path.
+
+**Example:**
+```
+query pipeline id > 5; name = John; users
+```
+
+#### Join Command (Iterator Model)
+
+`join <table_A> <table_B>`
+
+Performs a **cross-product** (Cartesian join) of two tables using the Nested Loop Join operator. Returns combined tuples with all attributes from both tables (table_A attributes first, then table_B attributes).
+
+**Example:**
+```
+query join users orders
+```
+
+**Note:** This performs a full cross-product. For large tables, results can be very large (|A| × |B| tuples).
 
 #### Propositions
 
