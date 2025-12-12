@@ -13,6 +13,7 @@ target_include_directories(ssd-dbms PUBLIC ${CMAKE_SOURCE_DIR}/include PRIVATE $
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
+target_compile_definitions(ssd-dbms PUBLIC $<$<PLATFORM_ID:Linux>:_GNU_SOURCE>)
 target_link_libraries(ssd-dbms PUBLIC Threads::Threads)
 
 # Build the CLI executable
